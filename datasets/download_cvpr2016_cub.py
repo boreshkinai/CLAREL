@@ -9,6 +9,8 @@ from google_drive_downloader import GoogleDriveDownloader as gdd
 FILE_ID = '0B0ywwgffWnLLZW9uVHNjb2JmNlE'
 FILE_NAME = 'cvpr2016_cub.tar.gz'
 
+DEFAULT_DIR = os.path.join(os.sep, 'mnt', 'datasets', 'public', 'research', 'cvpr2016_cub')
+
 
 def download_and_uncompress_dataset(dataset_dir: str):
     """Downloads CVPR2016-CUB dataset, uncompresses it locally.
@@ -39,7 +41,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         '--dataset-dir', type=str,
-        default=os.path.join(os.sep, 'mnt', 'datasets', 'public', 'research', 'cvpr2016_cub'),
+        default=DEFAULT_DIR,
         help='Path to the raw data')
     args = parser.parse_args()
     download_and_uncompress_dataset(args.dataset_dir)
