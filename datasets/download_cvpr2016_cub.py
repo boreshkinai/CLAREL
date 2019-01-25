@@ -56,7 +56,7 @@ def download_and_uncompress_dataset(dataset_dir: str):
 
     print()
     print("Downloading CUB2011 from", CUB2011_URL)
-    print("Downloading CUB2011 to", filepath_cvpr2016_cub)
+    print("Downloading CUB2011 to", filepath_cub2011)
     filepath_cub2011, _ = request.urlretrieve(CUB2011_URL, filepath_cub2011, _progress)
     statinfo = os.stat(filepath_cub2011)
     print()
