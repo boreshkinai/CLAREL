@@ -16,7 +16,7 @@ FILE_NAME_CUB2011 = 'CUB_200_2011.tgz'
 
 
 DEFAULT_DIR = os.path.join(os.sep, 'mnt', 'datasets', 'public', 'research', 'cvpr2016_cub')
-DEFAULT_CUB_DIR = os.path.join(os.sep, DEFAULT_DIR, 'CUB_200_2011')
+DEFAULT_CUB_DIR = 'CUB_200_2011'
 
 
 def download_and_uncompress_dataset(dataset_dir: str):
