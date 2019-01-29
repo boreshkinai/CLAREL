@@ -14,7 +14,6 @@ class Cvpr2016CubLoader:
     """
     Loads the CVPR2016-CUB dataset
     """
-    raw_images: List[Image]
 
     def __init__(self, data_dir: str = DEFAULT_DIR, cub_dir: str = DEFAULT_CUB_DIR, split: str = "train",
                  img_target_size: int = 299, img_border_size: int = 16, max_text_len: int = 30,
