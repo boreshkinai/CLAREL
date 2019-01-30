@@ -7,6 +7,9 @@ from torch.utils.serialization import load_lua
 from keras.preprocessing.text import Tokenizer
 from keras.preprocessing.sequence import pad_sequences
 from datasets import Dataset
+import pickle
+import gzip, bz2
+import time
 
 
 class Cvpr2016CubLoader(Dataset):
@@ -41,6 +44,25 @@ class Cvpr2016CubLoader(Dataset):
         self._load_image_meta()
         self._load_tokenized_text()
         self._load_raw_images()
+
+    def load_cached(self):
+        print()
+        print('Loading split', self.split)
+        cache_filepath = os.path.join(self.data_dir, 'data_'+self.split+'.pkl')
+        if os.path.isfile(cache_filepath):
+            print("Loading cached file", cache_filepath)
+            dt_load = time.time()
+            with gzip.GzipFile(cache_filepath, 'r') as f:
+                self.__dict__.update(pickle.load(f).__dict__)
+            print("Loaded cache in", time.time() - dt_load, 'sec')
+            return
+
+        self._load_image_meta()
+        self._load_tokenized_text()
+        self._load_raw_images()
+
+        with gzip.GzipFile(cache_filepath, 'w') as f:
+            pickle.dump(self, f)
 
     def _load_split_class_ids(self):
         with open(os.path.join(self.data_dir, self.split + 'classes.txt')) as f:
@@ -78,6 +100,7 @@ class Cvpr2016CubLoader(Dataset):
     def _load_raw_images(self) -> None:
         print("Load raw image data for split", self.split)
         self.raw_images = []
+
         for image_path in tqdm(self.image_paths):
             im = Image.open(image_path)
             # Handle non-RGB
@@ -86,6 +109,7 @@ class Cvpr2016CubLoader(Dataset):
             scale_factor = ((self.img_target_size + 2*self.img_border_size) / min(im.size))
             im = im.resize((int(scale_factor*im.size[0]), int(scale_factor*im.size[1])), Image.ANTIALIAS)
             self.raw_images.append(im)
+
         self.crop_options = [self._crop_center, self._crop_bottom_left,
                              self._crop_bottom_right, self._crop_top_left, self._crop_top_right]
 
