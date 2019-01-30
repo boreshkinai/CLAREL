@@ -670,7 +670,8 @@ def train(flags):
     image_size = get_image_size(flags.data_dir)
 
     # Get datasets
-    dataset_splits = get_dataset_splits(dataset_name=flags.dataset, data_dir=flags.data_dir, splits=['train'])
+    dataset_splits = get_dataset_splits(dataset_name=flags.dataset, data_dir=flags.data_dir,
+                                        splits=['train', 'test', 'val'])
     with tf.Graph().as_default():
         global_step = tf.Variable(0, trainable=False, name='global_step', dtype=tf.int64)
         is_training = tf.Variable(True, trainable=False, name='is_training', dtype=tf.bool)
