@@ -343,7 +343,7 @@ def get_image_feature_extractor(images: tf.Tensor, flags, is_training=False, sco
         h = get_inception_v3(images, flags=flags, is_training=is_training, reuse=reuse, scope=scope)
 
     if len(original_shape) == 5:
-        h = tf.reshape(h, shape=(original_shape[0:2]+[-1]))
+        h = tf.reshape(h, shape=([-1] + [original_shape[1], h.get_shape().as_list()[-1]]))
         h = tf.reduce_mean(h, axis=1, keep_dims=False)
     return h
 
@@ -410,7 +410,7 @@ def get_text_feature_extractor(text, text_length, flags, embedding_size=512, is_
                                reuse=reuse, scope=scope)
 
     if len(original_shape) == 3:
-        h = tf.reshape(h, shape=(original_shape[0:2] + [-1]))
+        h = tf.reshape(h, shape=([-1] + [original_shape[1], h.get_shape().as_list()[-1]]))
         h = tf.reduce_mean(h, axis=1, keep_dims=False)
     return h
 
@@ -616,12 +616,53 @@ class ModelLoader:
             num_tot += len(labels_pred_txt2img)
         return {'acc_txt2img': num_correct_txt2img / num_tot, 'acc_img2txt': num_correct_img2txt / num_tot}
 
+    def eval_acc(self, data_set: Dataset, num_samples: int = 100):
+        """
+        Runs evaluation loop over dataset
+        :param data_set:
+        :param num_samples: number of tasks to sample from the dataset
+        :return:
+        """
+        num_correct_txt2img = 0.0
+        num_correct_img2txt = 0.0
+        num_tot = 0.0
+        for i in trange(num_samples):
+            images, texts, text_len, match_labels = data_set.next_batch(
+                batch_size=self.batch_size, num_images=self.flags.num_images, num_texts=self.flags.num_texts)
+            labels_txt2img, labels_img2txt = match_labels
+            feed_dict = {self.images_pl: images.astype(dtype=np.float32),
+                         self.text_pl: texts,
+                         self.text_len_pl: text_len}
+            logits = self.sess.run(self.logits, feed_dict)
+            labels_pred_txt2img = np.argmax(logits, axis=-1)
+            labels_pred_img2txt = np.argmax(logits, axis=0)
+
+            num_correct_txt2img += sum(labels_pred_txt2img == labels_txt2img)
+            num_correct_img2txt += sum(labels_pred_img2txt == labels_img2txt)
+            num_tot += len(labels_pred_txt2img)
+        return {'acc_txt2img': num_correct_txt2img / num_tot, 'acc_img2txt': num_correct_img2txt / num_tot}
+
 
 def eval_once(flags: Namespace, datasets: Dict[str, Dataset]):
     model = ModelLoader(model_path=flags.pretrained_model_dir, batch_size=flags.eval_batch_size)
     results = {}
     for data_name, dataset in datasets.items():
         results_eval = model.eval(data_set=dataset, num_samples=flags.num_samples_eval)
+        for result_name, result_val in results_eval.items():
+            results["evaluation/" + result_name + "_" + data_name] = result_val
+            logging.info("accuracy_%s: %.3g" % (result_name + "_" + data_name, result_val))
+
+    log_dir = get_logdir_name(flags)
+    eval_writer = summary_writer(log_dir + '/eval')
+    eval_writer(model.step, **results)
+
+
+def eval_acc(flags: Namespace, datasets: Dict[str, Dataset]):
+    model = ModelLoader(model_path=flags.pretrained_model_dir, batch_size=flags.eval_batch_size)
+    results = {}
+    for data_name, dataset in datasets.items():
+
+        results_eval = model.eval_acc(data_set=dataset, num_samples=flags.num_samples_eval)
         for result_name, result_val in results_eval.items():
             results["evaluation/" + result_name + "_" + data_name] = result_val
             logging.info("accuracy_%s: %.3g" % (result_name + "_" + data_name, result_val))

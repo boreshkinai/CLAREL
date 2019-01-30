@@ -218,7 +218,42 @@ class Cvpr2016CubLoader(Dataset):
         sampled_idxs = np.random.choice(idxs, size=num_texts, replace=True)
         return texts[sampled_idxs], lengths[sampled_idxs]
 
+    def sequential_evaluation_batches(self, batch_size: int = 64, num_images: int = 10, num_texts: int = 10):
+        num_batches = int(np.ceil(len(self.raw_images) / batch_size))
+        for i in range(num_batches):
+            print(i)
+            if num_images == 10:
+                images = self.raw_images[i * batch_size:(i + 1) * batch_size]
+                images_out = [self.get_10_image_crops(image) for image in images]
+            else:
+                images_out = [self._sample_images(idx) for idx in range(i * batch_size, (i + 1) * batch_size)]
+
+            if num_texts == 10:
+                texts_out = self.tokenized_texts[i * batch_size:(i + 1) * batch_size]
+                text_lengths_out = self.tokenized_text_lengths[i * batch_size:(i + 1) * batch_size]
+            else:
+                texts_out, text_lengths_out = [], []
+                for idx in range(i * batch_size, (i + 1) * batch_size):
+                    texts, text_lengths = self._sample_texts(idx)
+                    texts_out.append(texts)
+                    text_lengths_out.append(text_lengths)
+
+            yield np.array(images_out), np.array(texts_out), np.array(text_lengths_out)
+
+    def get_10_image_crops(self, image):
+        crop_options = [self._crop_center, self._crop_bottom_left, self._crop_bottom_right, self._crop_top_left,
+                        self._crop_top_right]
+        image_flip = image.transpose(Image.FLIP_LEFT_RIGHT)
+        crops_out = []
+        for crop in crop_options:
+            crops_out.append(np.array(crop(image)))
+            crops_out.append(np.array(crop(image_flip)))
+        return np.array(crops_out)
+
 
 # loader = Cvpr2016CubLoader(data_dir='cvpr2016_cub', cub_dir=DEFAULT_CUB_DIR)
 # loader.load()
 # loader.next_batch()
+# for batch in loader.sequential_evaluation_batches():
+#     a=1
+#     print(batch[0].shape)
