@@ -80,6 +80,9 @@ class Cvpr2016CubLoader(Dataset):
         self.raw_images = []
         for image_path in tqdm(self.image_paths):
             im = Image.open(image_path)
+            # Handle non-RGB
+            if len(np.array(im).shape) != 3:
+                im = im.convert('RGB')
             scale_factor = ((self.img_target_size + 2*self.img_border_size) / min(im.size))
             im = im.resize((int(scale_factor*im.size[0]), int(scale_factor*im.size[1])), Image.ANTIALIAS)
             self.raw_images.append(im)
@@ -192,6 +195,6 @@ class Cvpr2016CubLoader(Dataset):
         return texts[sampled_idxs], lengths[sampled_idxs]
 
 
-# loader = cvpr2016CubLoader(data_dir='cvpr2016_cub', cub_dir=DEFAULT_CUB_DIR)
+# loader = Cvpr2016CubLoader(data_dir='cvpr2016_cub', cub_dir=DEFAULT_CUB_DIR)
 # loader.load()
 # loader.next_batch()
