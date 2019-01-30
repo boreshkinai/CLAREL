@@ -70,7 +70,7 @@ def get_arguments():
     parser.add_argument('--log_dir', type=str, default='', help='Base log dir')
     parser.add_argument('--exp_dir', type=str, default=None, help='experiement directory for Borgy')
     # Batch parameters
-    parser.add_argument('--train_batch_size', type=int, default=32, help='Training batch size.')
+    parser.add_argument('--train_batch_size', type=int, default=24, help='Training batch size.')
     parser.add_argument('--num_images', type=int, default=1, help='Number of image samples per image/text pair.')
     parser.add_argument('--num_texts', type=int, default=5, help='Number of text samples per image/text pair.')
     parser.add_argument('--init_learning_rate', type=float, default=0.001, help='Initial learning rate.')
