@@ -71,7 +71,7 @@ def get_arguments():
     parser.add_argument('--exp_dir', type=str, default=None, help='experiement directory for Borgy')
     # Batch parameters
     parser.add_argument('--train_batch_size', type=int, default=32, help='Training batch size.')
-    parser.add_argument('--num_images', type=int, default=3, help='Number of image samples per image/text pair.')
+    parser.add_argument('--num_images', type=int, default=1, help='Number of image samples per image/text pair.')
     parser.add_argument('--num_texts', type=int, default=5, help='Number of text samples per image/text pair.')
     parser.add_argument('--init_learning_rate', type=float, default=0.001, help='Initial learning rate.')
     parser.add_argument('--save_summaries_secs', type=int, default=60, help='Time between saving summaries')
@@ -590,7 +590,7 @@ class ModelLoader:
                      self.text_len_pl: text_len}
         return self.sess.run([self.logits, self.image_embeddings, self.text_embeddings], feed_dict)
 
-    def eval(self, data_set: Dict[str, Dataset] = None, num_samples: int = 100):
+    def eval(self, data_set: Dataset, num_samples: int = 100):
         """
         Runs evaluation loop over dataset
         :param data_set:
@@ -601,7 +601,8 @@ class ModelLoader:
         num_correct_img2txt = 0.0
         num_tot = 0.0
         for i in trange(num_samples):
-            images, texts, text_len, match_labels = data_set.next_batch(batch_size=self.batch_size)
+            images, texts, text_len, match_labels = data_set.next_batch(
+                batch_size=self.batch_size, num_images=self.flags.num_images, num_texts=self.flags.num_texts)
             labels_txt2img, labels_img2txt = match_labels
             feed_dict = {self.images_pl: images.astype(dtype=np.float32),
                          self.text_pl: texts,
