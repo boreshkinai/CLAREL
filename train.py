@@ -344,7 +344,7 @@ def get_image_feature_extractor(images: tf.Tensor, flags, is_training=False, sco
 
     if len(original_shape) == 5:
         h = tf.reshape(h, shape=([-1] + [original_shape[1], h.get_shape().as_list()[-1]]))
-        h = tf.reduce_mean(h, axis=1, keep_dims=False)
+        h = tf.reduce_mean(h, axis=1, keepdims=False)
     return h
 
 
@@ -402,7 +402,7 @@ def get_text_feature_extractor(text, text_length, flags, embedding_size=512, is_
     """
     original_shape = text.get_shape().as_list()
     if len(original_shape) == 3:
-        text = tf.reshape(text, shape=[np.prod(original_shape[:2]), -1])
+        text = tf.reshape(text, shape=([-1]+original_shape[2:]))
         text_length = tf.reshape(text_length, shape=[-1])
 
     if flags.text_feature_extractor == 'simple_bi_lstm':
@@ -411,7 +411,7 @@ def get_text_feature_extractor(text, text_length, flags, embedding_size=512, is_
 
     if len(original_shape) == 3:
         h = tf.reshape(h, shape=([-1] + [original_shape[1], h.get_shape().as_list()[-1]]))
-        h = tf.reduce_mean(h, axis=1, keep_dims=False)
+        h = tf.reduce_mean(h, axis=1, keepdims=False)
     return h
 
 
@@ -474,7 +474,7 @@ def get_inference_graph(images, text, text_length, flags, is_training, reuse=Fal
     return logits, image_embeddings, text_embeddings
 
 
-def get_input_placeholders(batch_size: int, image_size: int, num_images: int, num_texts: int, scope: str):
+def get_input_placeholders(batch_size: int, image_size: int, num_images: int, num_texts: int, max_text_len:int, scope: str):
     """
     :param image_size:
     :param num_images:
@@ -487,7 +487,7 @@ def get_input_placeholders(batch_size: int, image_size: int, num_images: int, nu
     with tf.variable_scope(scope):
         images_placeholder = tf.placeholder(tf.float32, shape=(batch_size, num_images, image_size, image_size, 3),
                                             name='images')
-        text_placeholder = tf.placeholder(shape=(batch_size, num_texts, None), name='text', dtype=tf.int32)
+        text_placeholder = tf.placeholder(shape=(batch_size, num_texts, max_text_len), name='text', dtype=tf.int32)
         text_length_placeholder = tf.placeholder(shape=(batch_size, num_texts), name='text_len', dtype=tf.int32)
         labels_txt2img = tf.placeholder(tf.int64, shape=(batch_size, ), name='match_labels_txt2img')
         labels_img2txt = tf.placeholder(tf.int64, shape=(batch_size, ), name='match_labels_img2txt')
@@ -545,7 +545,7 @@ def get_main_train_op(loss: tf.Tensor, global_step: tf.Variable, flags: Namespac
 
 
 class ModelLoader:
-    def __init__(self, model_path, batch_size):
+    def __init__(self, model_path, batch_size, num_images, num_texts, max_text_len):
         self.batch_size = batch_size
 
         latest_checkpoint = tf.train.latest_checkpoint(checkpoint_dir=os.path.join(model_path, 'train'))
@@ -556,7 +556,7 @@ class ModelLoader:
 
         with tf.Graph().as_default():
             images_pl, text_pl, text_len_pl, match_labels_txt2img, match_labels_img2txt = get_input_placeholders(
-                batch_size=batch_size, num_images=flags.num_images, num_texts=flags.num_texts,
+                batch_size=batch_size, num_images=num_images, num_texts=num_texts, max_text_len=max_text_len,
                 image_size=image_size, scope='inputs')
             logits, image_embeddings, text_embeddings = get_inference_graph(
                 images=images_pl, text=text_pl, text_length=text_len_pl, flags=flags, is_training=False)
@@ -713,6 +713,7 @@ def train(flags):
     # Get datasets
     dataset_splits = get_dataset_splits(dataset_name=flags.dataset, data_dir=flags.data_dir,
                                         splits=['train', 'test', 'val'])
+    max_text_len = dataset_splits['train'].max_text_len
     with tf.Graph().as_default():
         global_step = tf.Variable(0, trainable=False, name='global_step', dtype=tf.int64)
         is_training = tf.Variable(True, trainable=False, name='is_training', dtype=tf.bool)
@@ -721,7 +722,7 @@ def train(flags):
         images_pl, text_pl, text_len_pl, match_labels_txt2img_pl, match_labels_img2txt_pl = \
             get_input_placeholders(batch_size=flags.train_batch_size,
                                    num_images=flags.num_images, num_texts=flags.num_texts,
-                                   image_size=image_size, scope='inputs')
+                                   image_size=image_size, max_text_len=max_text_len, scope='inputs')
 
         logits, image_embeddings, text_embeddings = get_inference_graph(images=images_pl, text=text_pl,
                                                                         text_length=text_len_pl, flags=flags,
