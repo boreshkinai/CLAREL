@@ -1,5 +1,3 @@
-from typing import List
-
 from datasets.download_cvpr2016_cub import DEFAULT_DIR, DEFAULT_CUB_DIR
 import os
 from PIL import Image
@@ -8,9 +6,10 @@ import numpy as np
 from torch.utils.serialization import load_lua
 from keras.preprocessing.text import Tokenizer
 from keras.preprocessing.sequence import pad_sequences
+from datasets import Dataset
 
 
-class Cvpr2016CubLoader:
+class Cvpr2016CubLoader(Dataset):
     """
     Loads the CVPR2016-CUB dataset
     """
@@ -24,7 +23,11 @@ class Cvpr2016CubLoader:
         :param cub_dir: the folder inside the main dataset where the original CUB-2011 data are stored
         :param split: name of the split, admissible names: train, test, val, trainval, all
         """
-        self.data_dir = data_dir
+        super().__init__()
+        if data_dir:
+            self.data_dir = data_dir
+        else:
+            self.data_dir = DEFAULT_DIR
         self.split = split
         self.cub_dir = cub_dir
         self.img_target_size = img_target_size
@@ -144,7 +147,10 @@ class Cvpr2016CubLoader:
             texts, text_lengths = self._sample_texts(idx, num_texts=num_texts)
             batch_texts.append(texts)
             batch_text_lengths.append(text_lengths)
-        return np.array(batch_images), np.array(batch_texts), np.array(batch_text_lengths)
+        labels_txt2img = np.arange(batch_size, dtype=np.int32)
+        labels_img2txt = np.arange(batch_size, dtype=np.int32)
+        return np.array(batch_images), np.array(batch_texts), np.array(batch_text_lengths), \
+               (labels_txt2img, labels_img2txt)
 
     def _sample_images(self, idx: int, num_images: int):
         img_raw = self.raw_images[idx]
