@@ -25,7 +25,7 @@ from typing import List, Dict, Set
 from common.util import Namespace
 from datasets import Dataset
 from datasets.dataset_list import get_dataset_splits
-
+from scipy.spatial import cKDTree
 
 # TODO: connect to borgy
 
@@ -107,11 +107,11 @@ def get_arguments():
     parser.add_argument('--dropout', type=float, default=None)
     parser.add_argument('--weight_decay', type=float, default=0.0005)
     # Image feature extractor
-    parser.add_argument('--image_feature_extractor', type=str, default='simple_res_net',
+    parser.add_argument('--image_feature_extractor', type=str, default='inception_v3',
                         choices=['simple_res_net', 'inception_v3'], help='Which feature extractor to use')
-    parser.add_argument('--image_fe_trainable', type=bool, default=True)
+    parser.add_argument('--image_fe_trainable', type=bool, default=False)
     parser.add_argument('--image_fe_checkpoint_file', type=str,
-                        default='/mnt/scratch/ssense/data_dumps/pretrained_models/inception_v3.ckpt')  # '/Users/boris/Downloads/inception_v3.ckpt'
+                        default='/mnt/datasets/public/research/cvpr2016_cub/inception_v3.ckpt')  # '/Users/boris/Downloads/inception_v3.ckpt'
     parser.add_argument('--num_filters', type=int, default=64)
     parser.add_argument('--num_units_in_block', type=int, default=3)
     parser.add_argument('--num_blocks', type=int, default=4)
@@ -552,6 +552,9 @@ def get_main_train_op(loss: tf.Tensor, global_step: tf.Variable, flags: Namespac
 class ModelLoader:
     def __init__(self, model_path, batch_size, num_images, num_texts, max_text_len):
         self.batch_size = batch_size
+        self.num_images = num_images
+        self.num_texts = num_texts
+        self.max_text_len = max_text_len
 
         latest_checkpoint = tf.train.latest_checkpoint(checkpoint_dir=os.path.join(model_path, 'train'))
         step = int(os.path.basename(latest_checkpoint).split('-')[1])
@@ -563,8 +566,13 @@ class ModelLoader:
             images_pl, text_pl, text_len_pl, match_labels_txt2img, match_labels_img2txt = get_input_placeholders(
                 batch_size=batch_size, num_images=num_images, num_texts=num_texts, max_text_len=max_text_len,
                 image_size=image_size, scope='inputs')
-            logits, image_embeddings, text_embeddings = get_inference_graph(
-                images=images_pl, text=text_pl, text_length=text_len_pl, flags=flags, is_training=False)
+            if batch_size:
+                logits, image_embeddings, text_embeddings = get_inference_graph(
+                    images=images_pl, text=text_pl, text_length=text_len_pl, flags=flags, is_training=False)
+                self.logits=logits
+            else:
+                image_embeddings, text_embeddings = get_embeddings(
+                    images=images_pl, text=text_pl, text_length=text_len_pl, flags=flags, is_training=False)
             self.images_pl = images_pl
             self.text_pl = text_pl
             self.text_len_pl = text_len_pl
@@ -585,17 +593,15 @@ class ModelLoader:
             init_fn(self.sess)
 
             self.flags = flags
-            self.logits = logits
-            self.logits_size = self.logits.get_shape().as_list()[-1]
             self.step = step
 
     def predict(self, images, texts, text_len):
         feed_dict = {self.images_pl: images.astype(dtype=np.float32),
                      self.text_pl: texts,
                      self.text_len_pl: text_len}
-        return self.sess.run([self.logits, self.image_embeddings, self.text_embeddings], feed_dict)
+        return self.sess.run([self.image_embeddings, self.text_embeddings], feed_dict)
 
-    def eval(self, data_set: Dataset, num_samples: int = 100):
+    def eval_acc_batch(self, data_set: Dataset, num_samples: int = 100):
         """
         Runs evaluation loop over dataset
         :param data_set:
@@ -621,40 +627,52 @@ class ModelLoader:
             num_tot += len(labels_pred_txt2img)
         return {'acc_txt2img': num_correct_txt2img / num_tot, 'acc_img2txt': num_correct_img2txt / num_tot}
 
-    def eval_acc(self, data_set: Dataset, num_samples: int = 100):
+    def eval_acc(self, data_set: Dataset, batch_size:int):
         """
         Runs evaluation loop over dataset
         :param data_set:
-        :param num_samples: number of tasks to sample from the dataset
         :return:
         """
+        print("Computing embeddings")
         num_correct_txt2img = 0.0
         num_correct_img2txt = 0.0
         num_tot = 0.0
-        for i in trange(num_samples):
-            images, texts, text_len, match_labels = data_set.next_batch(
-                batch_size=self.batch_size, num_images=self.flags.num_images, num_texts=self.flags.num_texts)
-            labels_txt2img, labels_img2txt = match_labels
-            feed_dict = {self.images_pl: images.astype(dtype=np.float32),
-                         self.text_pl: texts,
-                         self.text_len_pl: text_len}
-            logits = self.sess.run(self.logits, feed_dict)
-            labels_pred_txt2img = np.argmax(logits, axis=-1)
-            labels_pred_img2txt = np.argmax(logits, axis=0)
+        image_embeddings, text_embeddings = [], []
+        for images, texts, text_lengths in tqdm(
+            data_set.sequential_evaluation_batches(batch_size=batch_size, 
+                                                   num_images=self.num_images, num_texts=self.num_texts)):
+            image_embeddings_batch, text_embeddings_batch = self.predict(images, texts, text_lengths)
+            image_embeddings.append(image_embeddings_batch)
+            text_embeddings.append(text_embeddings_batch)
+            num_tot += len(images)
+            
+        image_embeddings = np.concatenate(image_embeddings)
+        text_embeddings = np.concatenate(text_embeddings)
+        
+        kdtree = cKDTree(text_embeddings)
+        ap50 = 0.0
+        print("Computing AP@50")
+        image_classes = np.array(data_set.image_classes)
+        for query_id, query_embedding in enumerate(tqdm(image_embeddings)):
+            nns, nn_idxs = kdtree.query(query_embedding, k=50)
+            nn_idxs = nn_idxs.tolist()
 
-            num_correct_txt2img += sum(labels_pred_txt2img == labels_txt2img)
-            num_correct_img2txt += sum(labels_pred_img2txt == labels_img2txt)
-            num_tot += len(labels_pred_txt2img)
-        return {'acc_txt2img': num_correct_txt2img / num_tot, 'acc_img2txt': num_correct_img2txt / num_tot}
+            nearest_classes = image_classes[nn_idxs]
+            ap50 += sum([c == data_set.image_classes[query_id] for c in nearest_classes])/50
+        ap50 /= len(image_embeddings)
+        
+        
+        return {'AP@50': ap50}, image_embeddings, text_embeddings
+#         return {'acc_txt2img': num_correct_txt2img / num_tot, 'acc_img2txt': num_correct_img2txt / num_tot}
 
 
-def eval_once(flags: Namespace, datasets: Dict[str, Dataset]):
+def eval_acc_batch(flags: Namespace, datasets: Dict[str, Dataset]):
     max_text_len = list(datasets.values())[0].max_text_len
     model = ModelLoader(model_path=flags.pretrained_model_dir, batch_size=flags.eval_batch_size,
                         num_images=flags.num_images, num_texts=flags.num_texts, max_text_len=max_text_len)
     results = {}
     for data_name, dataset in datasets.items():
-        results_eval = model.eval(data_set=dataset, num_samples=flags.num_samples_eval)
+        results_eval = model.eval_acc_batch(data_set=dataset, num_samples=flags.num_samples_eval)
         for result_name, result_val in results_eval.items():
             results["evaluation/" + result_name + "_" + data_name] = result_val
             logging.info("accuracy_%s: %.3g" % (result_name + "_" + data_name, result_val))
@@ -665,11 +683,13 @@ def eval_once(flags: Namespace, datasets: Dict[str, Dataset]):
 
 
 def eval_acc(flags: Namespace, datasets: Dict[str, Dataset]):
-    model = ModelLoader(model_path=flags.pretrained_model_dir, batch_size=flags.eval_batch_size)
+    max_text_len = list(datasets.values())[0].max_text_len
+    model = ModelLoader(model_path=flags.pretrained_model_dir, 
+                    batch_size=None, num_images=1, num_texts=10, max_text_len=max_text_len)
+    
     results = {}
     for data_name, dataset in datasets.items():
-
-        results_eval = model.eval_acc(data_set=dataset, num_samples=flags.num_samples_eval)
+        results_eval, _, _ = model.eval_acc(data_set=dataset, batch_size=50)
         for result_name, result_val in results_eval.items():
             results["evaluation/" + result_name + "_" + data_name] = result_val
             logging.info("accuracy_%s: %.3g" % (result_name + "_" + data_name, result_val))
@@ -852,7 +872,8 @@ def train(flags):
 
                 if step % flags.eval_interval_steps == 0:
                     saver.save(sess, os.path.join(log_dir, 'model'), global_step=step)
-                    eval_once(flags, datasets=dataset_splits)
+                    eval_acc_batch(flags, datasets=dataset_splits)
+                    eval_acc(flags, datasets=dataset_splits)
 
 
 def test():

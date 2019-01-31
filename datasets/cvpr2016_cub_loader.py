@@ -221,20 +221,20 @@ class Cvpr2016CubLoader(Dataset):
     def sequential_evaluation_batches(self, batch_size: int = 64, num_images: int = 10, num_texts: int = 10):
         num_batches = int(np.ceil(len(self.raw_images) / batch_size))
         for i in range(num_batches):
-            print(i)
+            idx_max = min((i + 1) * batch_size, len(self.raw_images))
             if num_images == 10:
                 images = self.raw_images[i * batch_size:(i + 1) * batch_size]
                 images_out = [self.get_10_image_crops(image) for image in images]
             else:
-                images_out = [self._sample_images(idx) for idx in range(i * batch_size, (i + 1) * batch_size)]
+                images_out = [self._sample_images(idx, num_images) for idx in range(i * batch_size, idx_max)]
 
             if num_texts == 10:
                 texts_out = self.tokenized_texts[i * batch_size:(i + 1) * batch_size]
                 text_lengths_out = self.tokenized_text_lengths[i * batch_size:(i + 1) * batch_size]
             else:
                 texts_out, text_lengths_out = [], []
-                for idx in range(i * batch_size, (i + 1) * batch_size):
-                    texts, text_lengths = self._sample_texts(idx)
+                for idx in range(i * batch_size, idx_max):
+                    texts, text_lengths = self._sample_texts(idx, num_texts)
                     texts_out.append(texts)
                     text_lengths_out.append(text_lengths)
 
