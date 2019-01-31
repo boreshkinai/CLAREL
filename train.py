@@ -370,14 +370,14 @@ def get_simple_bi_lstm(text, text_length, flags, embedding_size=512, is_training
 
         cells_fw = [tf.nn.rnn_cell.LSTMCell(size) for size in [256]]
         cells_bw = [tf.nn.rnn_cell.LSTMCell(size) for size in [256]]
-        initial_states_fw = [cell.zero_state(text.get_shape()[0], dtype=tf.float32) for cell in cells_fw]
-        initial_states_bw = [cell.zero_state(text.get_shape()[0], dtype=tf.float32) for cell in cells_bw]
+#         initial_states_fw = [cell.zero_state(text.get_shape()[0], dtype=tf.float32) for cell in cells_fw]
+#         initial_states_bw = [cell.zero_state(text.get_shape()[0], dtype=tf.float32) for cell in cells_bw]
 
         h, *_ = tf.contrib.rnn.stack_bidirectional_dynamic_rnn(cells_fw=cells_fw,
                                                                cells_bw=cells_bw,
                                                                inputs=h,
-                                                               initial_states_fw=initial_states_fw,
-                                                               initial_states_bw=initial_states_bw,
+#                                                                initial_states_fw=initial_states_fw,
+#                                                                initial_states_bw=initial_states_bw,
                                                                dtype=tf.float32,
                                                                sequence_length=text_length)
         mask = tf.expand_dims(tf.sequence_mask(text_length, maxlen=tf.shape(text)[1], dtype=tf.float32), axis=-1)
@@ -456,15 +456,9 @@ def get_inference_graph(images, text, text_length, flags, is_training, reuse=Fal
     :param reuse:
     :return:
     """
-
+    image_embeddings, text_embeddings = get_embeddings(images, text, text_length, 
+                                                       flags=flags, is_training=is_training, reuse=reuse)
     with tf.variable_scope('Model'):
-        image_embeddings = get_image_feature_extractor(images, flags, is_training=is_training,
-                                                       scope='image_feature_extractor', reuse=reuse)
-        text_embedding_size = image_embeddings.get_shape().as_list()[-1]
-        text_embeddings = get_text_feature_extractor(text, text_length, flags, embedding_size=text_embedding_size,
-                                                     is_training=is_training, scope='text_feature_extractor',
-                                                     reuse=reuse)
-
         # Here we compute logits of correctly matching text to a given image.
         # We could also compute logits of correctly matching an image to a given text by reversing
         # image_embeddings and text_embeddings
@@ -472,6 +466,17 @@ def get_inference_graph(images, text, text_length, flags, is_training, reuse=Fal
                                    embedding_mod2=text_embeddings, flags=flags,
                                    is_training=is_training, scope='distance_head')
     return logits, image_embeddings, text_embeddings
+
+
+def get_embeddings(images, text, text_length, flags, is_training, reuse=False):
+    with tf.variable_scope('Model'):
+        image_embeddings = get_image_feature_extractor(images, flags, is_training=is_training,
+                                                       scope='image_feature_extractor', reuse=reuse)
+        text_embedding_size = image_embeddings.get_shape().as_list()[-1]
+        text_embeddings = get_text_feature_extractor(text, text_length, flags, embedding_size=text_embedding_size,
+                                                     is_training=is_training, scope='text_feature_extractor',
+                                                     reuse=reuse)
+    return image_embeddings, text_embeddings
 
 
 def get_input_placeholders(batch_size: int, image_size: int, num_images: int, num_texts: int, max_text_len:int, scope: str):
@@ -644,7 +649,9 @@ class ModelLoader:
 
 
 def eval_once(flags: Namespace, datasets: Dict[str, Dataset]):
-    model = ModelLoader(model_path=flags.pretrained_model_dir, batch_size=flags.eval_batch_size)
+    max_text_len = list(datasets.values())[0].max_text_len
+    model = ModelLoader(model_path=flags.pretrained_model_dir, batch_size=flags.eval_batch_size,
+                        num_images=flags.num_images, num_texts=flags.num_texts, max_text_len=max_text_len)
     results = {}
     for data_name, dataset in datasets.items():
         results_eval = model.eval(data_set=dataset, num_samples=flags.num_samples_eval)
