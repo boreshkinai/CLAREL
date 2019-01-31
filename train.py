@@ -25,7 +25,7 @@ from typing import List, Dict, Set
 from common.util import Namespace
 from datasets import Dataset
 from datasets.dataset_list import get_dataset_splits
-from scipy.spatial import cKDTree
+from common.metrics import ap_at_k
 
 # TODO: connect to borgy
 
@@ -649,21 +649,10 @@ class ModelLoader:
         image_embeddings = np.concatenate(image_embeddings)
         text_embeddings = np.concatenate(text_embeddings)
         
-        kdtree = cKDTree(text_embeddings)
-        ap50 = 0.0
-        print("Computing AP@50")
-        image_classes = np.array(data_set.image_classes)
-        for query_id, query_embedding in enumerate(tqdm(image_embeddings)):
-            nns, nn_idxs = kdtree.query(query_embedding, k=50)
-            nn_idxs = nn_idxs.tolist()
-
-            nearest_classes = image_classes[nn_idxs]
-            ap50 += sum([c == data_set.image_classes[query_id] for c in nearest_classes])/50
-        ap50 /= len(image_embeddings)
+        ap50, top1_acc = ap_at_k(support_embeddings=text_embeddings, query_embeddings=image_embeddings, 
+                 class_ids=data_set.image_classes, k=50)
         
-        
-        return {'AP@50': ap50}, image_embeddings, text_embeddings
-#         return {'acc_txt2img': num_correct_txt2img / num_tot, 'acc_img2txt': num_correct_img2txt / num_tot}
+        return {'AP@50': ap50, 'Top-1 Acc': top1_acc}, image_embeddings, text_embeddings
 
 
 def eval_acc_batch(flags: Namespace, datasets: Dict[str, Dataset]):
