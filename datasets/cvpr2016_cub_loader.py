@@ -65,13 +65,13 @@ class Cvpr2016CubLoader(Dataset):
             pickle.dump(self, f)
 
     def _load_split_class_ids(self):
-        with open(os.path.join(self.data_dir, self.split + 'classes.txt')) as f:
+        with open(os.path.join(self.data_dir, self.split + 'classes.txt'), 'r') as f:
             split_classes = f.read().splitlines()
         return [c.split(sep='.')[0] for c in split_classes]
 
     def _load_image_meta(self):
         # Load image names
-        with open(os.path.join(self.data_dir, self.cub_dir, 'images.txt')) as f:
+        with open(os.path.join(self.data_dir, self.cub_dir, 'images.txt'), 'r') as f:
             image_lines = f.read().splitlines()
         # Load train/val/test split file
         split_class_ids = self._load_split_class_ids()
@@ -151,7 +151,7 @@ class Cvpr2016CubLoader(Dataset):
         self.tokenizer = tokenizer
 
     def _load_texts_of_an_imange(self, image_class: str = None, image_file_name: str = None):
-        with open(os.path.join(self.data_dir, 'text_c10', image_class, image_file_name.split('.')[0] + '.txt')) as f:
+        with open(os.path.join(self.data_dir, 'text_c10', image_class, image_file_name.split('.')[0] + '.txt'), 'r') as f:
             text_lines = f.read().splitlines()
         assert len(text_lines) == 10
         return text_lines

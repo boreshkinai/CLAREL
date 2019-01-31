@@ -38,10 +38,6 @@ go to deep-prior/deep_prior/experiements/mini-imagenet and run
 python train_text_embedding.py
 '''
 
-# docker pull gcr.io/tensorflow/tensorflow:1.4.1-devel-gpu-py3
-# docker tag gcr.io/tensorflow/tensorflow:1.4.1-devel-gpu-py3 images.borgy.elementai.lan/tensorflow/tensorflow:1.4.1-devel-gpu-py3
-# docker push images.borgy.elementai.lan/tensorflow/tensorflow:1.4.1-devel-gpu-py3
-
 tf.logging.set_verbosity(tf.logging.INFO)
 logging.basicConfig(level=logging.INFO)
 
