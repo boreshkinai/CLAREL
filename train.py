@@ -52,7 +52,7 @@ def get_arguments():
                         choices=['train', 'eval', 'test'])
     # Dataset parameters
     parser.add_argument('--data_dir', type=str, default=None, help='Path to the data.')
-    parser.add_argument('--data_split', type=str, default='train', choices=['train', 'val', 'test'],
+    parser.add_argument('--train_split', type=str, default='trainval', choices=['train', 'trainval'],
                         help='Split of the data to be used to perform operation.')
     parser.add_argument('--dataset', type=str, default='cvpr2016_cub',
                         choices=['cvpr2016_cub'], help='Dataset to train.')
@@ -94,8 +94,6 @@ def get_arguments():
     parser.add_argument('--num_samples_eval', type=int, default=100, help='Number of evaluation samples?')
     parser.add_argument('--eval_batch_size', type=int, default=32, help='Evaluation batch size?')
     # Test parameters
-    parser.add_argument('--num_cases_test', type=int, default=50000,
-                        help='Number of few-shot cases to compute test accuracy')
     parser.add_argument('--pretrained_model_dir', type=str,
                         default='./logs/batch_size-32-lr-0.122-lr_anneal-cos-epochs-100.0-dropout-1.0-optimizer-sgd-weight_decay-0.0005-augment-False-num_filters-64-feature_extractor-simple_res_net-task_encoder-class_mean-attention_num_filters-32/train',
                         help='Path to the pretrained model to run the nearest neigbor baseline test.')
@@ -577,6 +575,7 @@ class ModelLoader:
             self.image_embeddings = image_embeddings
             self.text_embeddings = text_embeddings
 
+            print('Loading model')
             init_fn = slim.assign_from_checkpoint_fn(latest_checkpoint, tf.global_variables())
 
             config = tf.ConfigProto(allow_soft_placement=True)
@@ -659,7 +658,7 @@ def eval_acc_batch(flags: Namespace, datasets: Dict[str, Dataset]):
     for data_name, dataset in datasets.items():
         results_eval = model.eval_acc_batch(data_set=dataset, num_samples=flags.num_samples_eval)
         for result_name, result_val in results_eval.items():
-            results["evaluation/" + result_name + "_" + data_name] = result_val
+            results["evaluation_batch/" + result_name + "_" + data_name] = result_val
             logging.info("accuracy_%s: %.3g" % (result_name + "_" + data_name, result_val))
 
     log_dir = get_logdir_name(flags)
@@ -670,13 +669,13 @@ def eval_acc_batch(flags: Namespace, datasets: Dict[str, Dataset]):
 def eval_acc(flags: Namespace, datasets: Dict[str, Dataset]):
     max_text_len = list(datasets.values())[0].max_text_len
     model = ModelLoader(model_path=flags.pretrained_model_dir, 
-                    batch_size=None, num_images=1, num_texts=10, max_text_len=max_text_len)
+                    batch_size=None, num_images=10, num_texts=10, max_text_len=max_text_len)
     
     results = {}
     for data_name, dataset in datasets.items():
-        results_eval, _, _ = model.eval_acc(data_set=dataset, batch_size=50)
+        results_eval, _, _ = model.eval_acc(data_set=dataset, batch_size=10)
         for result_name, result_val in results_eval.items():
-            results["evaluation/" + result_name + "_" + data_name] = result_val
+            results["evaluation_full/" + result_name + "_" + data_name] = result_val
             logging.info("accuracy_%s: %.3g" % (result_name + "_" + data_name, result_val))
 
     log_dir = get_logdir_name(flags)
@@ -724,8 +723,8 @@ def train(flags):
 
     # Get datasets
     dataset_splits = get_dataset_splits(dataset_name=flags.dataset, data_dir=flags.data_dir,
-                                        splits=['train', 'test', 'val'])
-    max_text_len = dataset_splits['train'].max_text_len
+                                        splits=[flags.train_split, 'test', 'val'])
+    max_text_len = dataset_splits[flags.train_split].max_text_len
     with tf.Graph().as_default():
         global_step = tf.Variable(0, trainable=False, name='global_step', dtype=tf.int64)
         is_training = tf.Variable(True, trainable=False, name='is_training', dtype=tf.bool)
@@ -823,7 +822,7 @@ def train(flags):
             for step in range(checkpoint_step, flags.number_of_steps):
                 # get batch of data to compute classification loss
                 dt_batch = time.time()
-                images, text, text_length, match_labels = dataset_splits['train'].next_batch(
+                images, text, text_length, match_labels = dataset_splits[flags.train_split].next_batch(
                     batch_size=flags.train_batch_size, num_images=flags.num_images, num_texts=flags.num_texts)
                 labels_txt2img, labels_img2txt = match_labels
                 dt_batch = time.time() - dt_batch
