@@ -1,23 +1,19 @@
 import os
-import sys
-import tarfile
 import argparse
 import pathlib
-import urllib.request as request
 from google_drive_downloader import GoogleDriveDownloader as gdd
 import gzip
 import shutil
 
-
 # The URL where the word2vec pretrained model data can be downloaded.
 FILE_ID = '0B7XkCwpI5KDYNlNUTTlSS21pQmM'
-FILE_NAME_WORD2VEC = 'GoogleNews-vectors-negative300.bin.gz'
+FILE_NAME_WORD2VEC = 'GoogleNews-vectors-negative300.bin'
 
-DEFAULT_DIR = os.path.join(os.sep, 'mnt', 'datasets', 'public', 'research', 'GoogleNews_vectors_negative300')
+DEFAULT_WORD2VEC_DIR = os.path.join(os.sep, 'mnt', 'datasets', 'public', 'research', 'GoogleNews_vectors_negative300')
 
 
 def download_and_uncompress_dataset(dataset_dir: str):
-    """Downloads CVPR2016-CUB dataset, uncompresses it locally.
+    """Downloads GoogleNews word2vec model, uncompresses it locally.
     Parameters
     ----------
     dataset_dir : str
@@ -25,7 +21,7 @@ def download_and_uncompress_dataset(dataset_dir: str):
     """
 
     pathlib.Path(dataset_dir).mkdir(parents=True, exist_ok=True)
-    filename_word2vec = FILE_NAME_WORD2VEC
+    filename_word2vec = FILE_NAME_WORD2VEC + '.gz'
     filepath_word2vec = os.path.join(dataset_dir, filename_word2vec)
 
 
@@ -40,12 +36,11 @@ def download_and_uncompress_dataset(dataset_dir: str):
     with gzip.open(filepath_word2vec, 'rb') as f_in:
         with open(".".join(filepath_word2vec.split('.')[:-1]), 'wb') as f_out:
             shutil.copyfileobj(f_in, f_out)
-
-    print('Successfully downloaded and extracted CVPR2016-CUB')
+    print('Successfully downloaded and extracted word2vec')
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset-dir', type=str, default=DEFAULT_DIR, help='Path to the raw data')
+    parser.add_argument('--dataset-dir', type=str, default=DEFAULT_WORD2VEC_DIR, help='Path to the raw data')
     args = parser.parse_args()
     download_and_uncompress_dataset(args.dataset_dir)

@@ -1,4 +1,5 @@
 from datasets.download_cvpr2016_cub import DEFAULT_DIR, DEFAULT_CUB_DIR
+from datasets.download_googlenews_vectors_negative import DEFAULT_WORD2VEC_DIR, FILE_NAME_WORD2VEC
 import os
 from PIL import Image
 from tqdm import tqdm
@@ -10,6 +11,8 @@ from datasets import Dataset
 import pickle
 import gzip, bz2
 import time
+import gensim
+import gensim.downloader
 
 
 class Cvpr2016CubLoader(Dataset):
@@ -19,7 +22,7 @@ class Cvpr2016CubLoader(Dataset):
 
     def __init__(self, data_dir: str = DEFAULT_DIR, cub_dir: str = DEFAULT_CUB_DIR, split: str = "train",
                  img_target_size: int = 299, img_border_size: int = 16, max_text_len: int = 30,
-                 vocab_size: int = 10000):
+                 vocab_size: int = 10000, word_embed_dir=DEFAULT_WORD2VEC_DIR, word_embed_file=FILE_NAME_WORD2VEC):
         """
 
         :param data_dir: data in which the main dataset is stored
@@ -30,25 +33,28 @@ class Cvpr2016CubLoader(Dataset):
         if data_dir:
             self.data_dir = data_dir
         else:
-            self.data_dir = DEFAULT_DIR
+            self.data_dir = DEFAULT_WORD2VEC_DIR
         self.split = split
         self.cub_dir = cub_dir
         self.img_target_size = img_target_size
         self.img_border_size = img_border_size
         self.max_text_len = max_text_len
         self.vocab_size = vocab_size
+        self.word_embed_dir = word_embed_dir
+        self.word_embed_file = word_embed_file
 
     def load(self):
         print()
         print('Loading split', self.split)
         self._load_image_meta()
         self._load_tokenized_text()
+        self._load_text_embeddings()
         self._load_raw_images()
 
     def load_cached(self):
         print()
         print('Loading split', self.split)
-        cache_filepath = os.path.join(self.data_dir, 'data_'+self.split+'.pkl')
+        cache_filepath = os.path.join(self.data_dir, 'split_'+self.split+'.pkl')
         if os.path.isfile(cache_filepath):
             print("Loading cached file", cache_filepath)
             dt_load = time.time()
@@ -57,12 +63,34 @@ class Cvpr2016CubLoader(Dataset):
             print("Loaded cache in", time.time() - dt_load, 'sec')
             return
 
-        self._load_image_meta()
-        self._load_tokenized_text()
-        self._load_raw_images()
+        self.load()
 
         with gzip.GzipFile(cache_filepath, 'w') as f:
             pickle.dump(self, f)
+
+    def _load_text_embeddings(self):
+        print("Loading word2vec embedding...")
+        word_embedding_model = gensim.models.KeyedVectors.load_word2vec_format(
+            os.path.join(self.word_embed_dir, self.word_embed_file), binary=True)
+
+        self.word_vectors_dict = {}
+        self.word_vectors_idx = []
+        self.word_vectors_len = word_embedding_model.vector_size
+        num_misses = 0
+        # this corresponds to the 0, unknown, token in the tokenizer
+        self.word_vectors_idx.append(np.zeros(shape=(word_embedding_model.vector_size,)))
+        self.word_vectors_dict["UNK"] = np.zeros(shape=(word_embedding_model.vector_size,))
+        for key, idx in self.tokenizer.word_index.items():
+            if key in word_embedding_model.vocab:
+                self.word_vectors_dict[key] = word_embedding_model[key]
+                self.word_vectors_idx.append(word_embedding_model[key])
+            else:
+                num_misses += 1
+                self.word_vectors_dict[key] = np.zeros(shape=(word_embedding_model.vector_size,))
+                self.word_vectors_idx.append(np.zeros(shape=(word_embedding_model.vector_size,)))
+
+        print("Number of tokens not found in the embedding:", num_misses, 'out of', len(self.tokenizer.word_index))
+        self.word_vectors_idx = np.array(self.word_vectors_idx, dtype=np.float32)
 
     def _load_split_class_ids(self):
         with open(os.path.join(self.data_dir, self.split + 'classes.txt'), 'r') as f:
@@ -251,8 +279,9 @@ class Cvpr2016CubLoader(Dataset):
         return np.array(crops_out)
 
 
-# loader = Cvpr2016CubLoader(data_dir='cvpr2016_cub', cub_dir=DEFAULT_CUB_DIR)
-# loader.load()
+# loader = Cvpr2016CubLoader(data_dir='cvpr2016_cub', cub_dir=DEFAULT_CUB_DIR,
+#                            word_embed_dir='GoogleNews_vectors_negative300')
+# loader.load_cached()
 # loader.next_batch()
 # for batch in loader.sequential_evaluation_batches():
 #     a=1

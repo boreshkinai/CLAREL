@@ -6,4 +6,4 @@ MAINTAINER Boris Oreshkin <boris@elementai.com>
 # > At the moment, setting "LANG=C" on a Linux system *fundamentally breaks Python 3*, and that's not OK.
 ENV LANG C.UTF-8
 
-RUN pip install tqdm gitpython googledrivedownloader requests pillow torch==0.4.1 keras==2.2.4
+RUN pip install tqdm gitpython googledrivedownloader requests pillow torch==0.4.1 keras==2.2.4 gensim==3.7.1
