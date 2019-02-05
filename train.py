@@ -52,7 +52,7 @@ def get_arguments():
                         choices=['train', 'eval', 'test'])
     # Dataset parameters
     parser.add_argument('--data_dir', type=str, default=None, help='Path to the data.')
-    parser.add_argument('--train_split', type=str, default='train', choices=['train', 'trainval'],
+    parser.add_argument('--train_split', type=str, default='trainval', choices=['train', 'trainval'],
                         help='Split of the data to be used to perform operation.')
     parser.add_argument('--dataset', type=str, default='cvpr2016_cub',
                         choices=['cvpr2016_cub'], help='Dataset to train.')

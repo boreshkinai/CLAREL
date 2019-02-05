@@ -10,6 +10,6 @@ def get_dataset_splits(dataset_name, data_dir, splits: List[str] = ['train', 'te
     dataset_splits = {}
     for split in splits:
         loader = dataset(data_dir=data_dir, split=split)
-        loader.load()
+        loader.load_cached()
         dataset_splits[split] = loader
     return dataset_splits

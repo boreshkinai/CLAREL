@@ -37,14 +37,14 @@ if __name__ == "__main__":
     params = dict(
         repeat=list(range(0, 1)),  # used to repeate the same experiment
         dataset='cvpr2016_cub',
-        number_of_steps=[50000, 100000],
-        num_texts=[1, 3, 5],
+        number_of_steps=[50000, 25000],
+        num_texts=[3, 5, 10],
         num_images=[3],
         optimizer=['sgd'], # 'sgd', 'adam'
         init_learning_rate=0.1,
         lr_decay_rate=10.0,
-        train_batch_size=[32],
-        word_embed_dim=128,
+        train_batch_size=[32, 64],
+#         word_embed_dim=128,
         metric_multiplier_init=[5.0],
     )
 
