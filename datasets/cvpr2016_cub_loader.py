@@ -223,6 +223,28 @@ class Cvpr2016CubLoader(Dataset):
         return np.array(batch_images), np.array(batch_texts), np.array(batch_text_lengths), \
                (labels_txt2img, labels_img2txt)
 
+    def next_batch_features(self, batch_size: int = 64, num_images: int = 2, num_texts: int = 5):
+        """
+        :param batch_size: number of text/image pairs in the batch
+        :param num_images: number of images sampled per pair
+        :param num_texts: number of texts per pair
+        :return:
+        """
+        idxs = np.arange(len(self.raw_images))
+        batch_idxs = np.random.choice(idxs, size=batch_size, replace=False)
+        batch_features = []
+        batch_texts = []
+        batch_text_lengths = []
+        for idx in batch_idxs:
+            batch_features.append(self._sample_features(idx, num_images=num_images))
+            texts, text_lengths = self._sample_texts(idx, num_texts=num_texts)
+            batch_texts.append(texts)
+            batch_text_lengths.append(text_lengths)
+        labels_txt2img = np.arange(batch_size, dtype=np.int32)
+        labels_img2txt = np.arange(batch_size, dtype=np.int32)
+        return np.array(batch_features), np.array(batch_texts), np.array(batch_text_lengths), \
+               (labels_txt2img, labels_img2txt)
+
     def _sample_images(self, idx: int, num_images: int):
         img_raw = self.raw_images[idx]
         images_batch = []
@@ -233,6 +255,14 @@ class Cvpr2016CubLoader(Dataset):
                 img = img.transpose(Image.FLIP_LEFT_RIGHT)
             images_batch.append(np.array(img))
         return np.array(images_batch)
+
+    def _sample_features(self, idx: int, num_images: int):
+        img_embeddings = self.image_embeddings[idx]
+        embeddings_batch = []
+        for i in range(num_images):
+            crop_idx = np.random.choice(np.arange(len(self.crop_options)), size=1, replace=False)[0]
+            embeddings_batch.append(img_embeddings[crop_idx])
+        return np.array(embeddings_batch)
 
     def _crop_center(self, img: Image):
         width, height = img.size
@@ -283,6 +313,27 @@ class Cvpr2016CubLoader(Dataset):
                     text_lengths_out.append(text_lengths)
 
             yield np.array(images_out), np.array(texts_out), np.array(text_lengths_out)
+
+    def sequential_evaluation_batches_features(self, batch_size: int = 64, num_images: int = 10, num_texts: int = 10):
+        num_batches = int(np.ceil(len(self.raw_images) / batch_size))
+        for i in range(num_batches):
+            idx_max = min((i + 1) * batch_size, len(self.raw_images))
+            if num_images == 10:
+                embeddings_out = self.image_embeddings[i * batch_size:(i + 1) * batch_size]
+            else:
+                embeddings_out = [self._sample_features(idx, num_images) for idx in range(i * batch_size, idx_max)]
+
+            if num_texts == 10:
+                texts_out = self.tokenized_texts[i * batch_size:(i + 1) * batch_size]
+                text_lengths_out = self.tokenized_text_lengths[i * batch_size:(i + 1) * batch_size]
+            else:
+                texts_out, text_lengths_out = [], []
+                for idx in range(i * batch_size, idx_max):
+                    texts, text_lengths = self._sample_texts(idx, num_texts)
+                    texts_out.append(texts)
+                    text_lengths_out.append(text_lengths)
+
+            yield np.array(embeddings_out), np.array(texts_out), np.array(text_lengths_out)
 
     def get_10_image_crops(self, image):
         crop_options = [self._crop_center, self._crop_bottom_left, self._crop_bottom_right, self._crop_top_left,
