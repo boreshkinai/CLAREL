@@ -33,7 +33,7 @@ class Cvpr2016CubLoader(Dataset):
         if data_dir:
             self.data_dir = data_dir
         else:
-            self.data_dir = DEFAULT_WORD2VEC_DIR
+            self.data_dir = DEFAULT_DIR
         self.split = split
         self.cub_dir = cub_dir
         self.img_target_size = img_target_size
