@@ -27,7 +27,7 @@ class InceptionV3Loader:
         saver = tf.train.Saver()
         saver.restore(self.sess, self.checkpoint_file)
 
-    def embed_batch(self, images):
+    def predict(self, images):
         predict_values, logit_values, embedding = self.sess.run(
             [self.end_points['Predictions'], self.logits, self.end_points['PreLogits']],
             feed_dict={self.input_tensor: images})
