@@ -52,7 +52,7 @@ def get_arguments():
                         choices=['train', 'eval', 'test'])
     # Dataset parameters
     parser.add_argument('--data_dir', type=str, default=None, help='Path to the data.')
-    parser.add_argument('--train_split', type=str, default='trainval', choices=['train', 'trainval'],
+    parser.add_argument('--train_split', type=str, default='train', choices=['train', 'trainval'],
                         help='Split of the data to be used to perform operation.')
     parser.add_argument('--dataset', type=str, default='cvpr2016_cub',
                         choices=['cvpr2016_cub'], help='Dataset to train.')
@@ -326,20 +326,24 @@ def get_image_feature_extractor(images: tf.Tensor, flags, is_training=False, sco
     :param reuse:
     :return:
     """
-    original_shape = images.get_shape().as_list()
-    if len(original_shape) == 5:
-        images = tf.reshape(images, shape=([-1]+original_shape[2:]))
+    if flags.image_fe_trainable:
+        original_shape = images.get_shape().as_list()
+        if len(original_shape) == 5:
+            images = tf.reshape(images, shape=([-1]+original_shape[2:]))
 
-    num_filters = [round(flags.num_filters * pow(flags.block_size_growth, i)) for i in range(flags.num_blocks)]
-    if flags.image_feature_extractor == 'simple_res_net':
-        h = get_simple_res_net(images, flags=flags, num_filters=num_filters, is_training=is_training, reuse=reuse,
-                               scope=scope)
-    elif flags.image_feature_extractor == 'inception_v3':
-        h = get_inception_v3(images, flags=flags, is_training=is_training, reuse=reuse, scope=scope)
+        num_filters = [round(flags.num_filters * pow(flags.block_size_growth, i)) for i in range(flags.num_blocks)]
+        if flags.image_feature_extractor == 'simple_res_net':
+            h = get_simple_res_net(images, flags=flags, num_filters=num_filters, is_training=is_training, reuse=reuse,
+                                   scope=scope)
+        elif flags.image_feature_extractor == 'inception_v3':
+            h = get_inception_v3(images, flags=flags, is_training=is_training, reuse=reuse, scope=scope)
 
-    if len(original_shape) == 5:
-        h = tf.reshape(h, shape=([-1] + [original_shape[1], h.get_shape().as_list()[-1]]))
-        h = tf.reduce_mean(h, axis=1, keepdims=False)
+        if len(original_shape) == 5:
+            h = tf.reshape(h, shape=([-1] + [original_shape[1], h.get_shape().as_list()[-1]]))
+    else:
+        h = images
+
+    h = tf.reduce_mean(h, axis=1, keepdims=False)
     return h
 
 
@@ -484,24 +488,38 @@ def get_embeddings(images, text, text_length, flags, is_training, embedding_init
     return image_embeddings, text_embeddings
 
 
-def get_input_placeholders(batch_size: int, image_size: int, num_images: int, num_texts: int, max_text_len:int, scope: str):
+def get_input_placeholders(batch_size: int, image_size: int, num_images: int, num_texts: int,
+                           max_text_len: int, flags: Namespace, scope: str):
     """
     :param image_size:
     :param num_images:
     :param num_texts:
+    :param max_text_len:
     :param scope:
     :return:
     :param batch_size:
     :return: placeholders for images, text and class labels
     """
     with tf.variable_scope(scope):
-        images_placeholder = tf.placeholder(tf.float32, shape=(batch_size, num_images, image_size, image_size, 3),
-                                            name='images')
+        images_placeholder = get_images_placeholder(batch_size=batch_size, num_images=num_images,
+                                                    image_size=image_size, flags=flags)
         text_placeholder = tf.placeholder(shape=(batch_size, num_texts, max_text_len), name='text', dtype=tf.int32)
         text_length_placeholder = tf.placeholder(shape=(batch_size, num_texts), name='text_len', dtype=tf.int32)
         labels_txt2img = tf.placeholder(tf.int64, shape=(batch_size, ), name='match_labels_txt2img')
         labels_img2txt = tf.placeholder(tf.int64, shape=(batch_size, ), name='match_labels_img2txt')
         return images_placeholder, text_placeholder, text_length_placeholder, labels_txt2img, labels_img2txt
+
+
+def get_images_placeholder(batch_size: int, num_images: int, image_size: int, flags: Namespace):
+    if flags.image_fe_trainable:
+        images_placeholder = tf.placeholder(tf.float32, shape=(batch_size, num_images, image_size, image_size, 3),
+                                            name='images')
+    else:
+        num_features_dict = {'simple_res_net': 512, 'inception_v3': 2048}
+        images_placeholder = tf.placeholder(tf.float32, name='images',
+                                            shape=(batch_size, num_images,
+                                                   num_features_dict[flags.image_feature_extractor]))
+    return images_placeholder
 
 
 def get_lr(global_step=None, flags=None):
