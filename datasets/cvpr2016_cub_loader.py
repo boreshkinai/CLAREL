@@ -9,10 +9,11 @@ from keras.preprocessing.text import Tokenizer
 from keras.preprocessing.sequence import pad_sequences
 from datasets import Dataset
 import pickle
-import gzip, bz2
+import gzip
 import time
 import gensim
 import gensim.downloader
+from common.pretrained_models import InceptionV3Loader
 
 
 class Cvpr2016CubLoader(Dataset):
@@ -50,11 +51,12 @@ class Cvpr2016CubLoader(Dataset):
         self._load_tokenized_text()
         self._load_text_embeddings()
         self._load_raw_images()
+        self._extract_image_features()
 
     def load_cached(self):
         print()
         print('Loading split', self.split)
-        cache_filepath = os.path.join(self.data_dir, 'split_'+self.split+'.pkl')
+        cache_filepath = os.path.join(self.data_dir, 'split_' + self.split + '.pkl')
         if os.path.isfile(cache_filepath):
             print("Loading cached file", cache_filepath)
             dt_load = time.time()
@@ -67,6 +69,19 @@ class Cvpr2016CubLoader(Dataset):
 
         with gzip.GzipFile(cache_filepath, 'w') as f:
             pickle.dump(self, f)
+
+    def _extract_image_features(self):
+        # Load pretrained model
+        image_model = InceptionV3Loader()
+        image_embeddings = []
+        for images, _, _ in tqdm(self.sequential_evaluation_batches(batch_size=10, num_images=10, num_texts=1)):
+            shape_in = list(images.shape)
+            images = np.reshape(images, newshape=([np.prod(shape_in[:2])] + shape_in[2:]))
+            _, _, image_embeddings_batch = image_model.predict(images)
+            image_embeddings_batch = np.reshape(image_embeddings_batch, newshape=(shape_in[:2] + [-1]))
+            image_embeddings.append(image_embeddings_batch)
+
+        self.image_embeddings = np.concatenate(image_embeddings)
 
     def _load_text_embeddings(self):
         print("Loading word2vec embedding...")
@@ -134,8 +149,8 @@ class Cvpr2016CubLoader(Dataset):
             # Handle non-RGB
             if len(np.array(im).shape) != 3:
                 im = im.convert('RGB')
-            scale_factor = ((self.img_target_size + 2*self.img_border_size) / min(im.size))
-            im = im.resize((int(scale_factor*im.size[0]), int(scale_factor*im.size[1])), Image.ANTIALIAS)
+            scale_factor = ((self.img_target_size + 2 * self.img_border_size) / min(im.size))
+            im = im.resize((int(scale_factor * im.size[0]), int(scale_factor * im.size[1])), Image.ANTIALIAS)
             self.raw_images.append(im)
 
         self.crop_options = [self._crop_center, self._crop_bottom_left,
@@ -179,7 +194,8 @@ class Cvpr2016CubLoader(Dataset):
         self.tokenizer = tokenizer
 
     def _load_texts_of_an_imange(self, image_class: str = None, image_file_name: str = None):
-        with open(os.path.join(self.data_dir, 'text_c10', image_class, image_file_name.split('.')[0] + '.txt'), 'r') as f:
+        with open(os.path.join(self.data_dir, 'text_c10', image_class,
+                               image_file_name.split('.')[0] + '.txt'), 'r') as f:
             text_lines = f.read().splitlines()
         assert len(text_lines) == 10
         return text_lines
@@ -229,15 +245,15 @@ class Cvpr2016CubLoader(Dataset):
 
     def _crop_top_right(self, img: Image):
         width, height = img.size
-        return img.crop((width-self.img_target_size, 0, width, self.img_target_size))
+        return img.crop((width - self.img_target_size, 0, width, self.img_target_size))
 
     def _crop_bottom_left(self, img: Image):
         width, height = img.size
-        return img.crop((0, height-self.img_target_size, self.img_target_size, height))
+        return img.crop((0, height - self.img_target_size, self.img_target_size, height))
 
     def _crop_bottom_right(self, img: Image):
         width, height = img.size
-        return img.crop((width-self.img_target_size, height-self.img_target_size, width, height))
+        return img.crop((width - self.img_target_size, height - self.img_target_size, width, height))
 
     def _sample_texts(self, idx: int, num_texts: int):
         texts = self.tokenized_texts[idx]
@@ -277,7 +293,6 @@ class Cvpr2016CubLoader(Dataset):
             crops_out.append(np.array(crop(image)))
             crops_out.append(np.array(crop(image_flip)))
         return np.array(crops_out)
-
 
 # loader = Cvpr2016CubLoader(data_dir='cvpr2016_cub', cub_dir=DEFAULT_CUB_DIR,
 #                            word_embed_dir='GoogleNews_vectors_negative300')
