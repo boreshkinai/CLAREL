@@ -52,7 +52,7 @@ def get_arguments():
                         choices=['train', 'eval', 'test'])
     # Dataset parameters
     parser.add_argument('--data_dir', type=str, default=None, help='Path to the data.')
-    parser.add_argument('--train_split', type=str, default='trainval', choices=['train', 'trainval'],
+    parser.add_argument('--train_split', type=str, default='train', choices=['train', 'trainval'],
                         help='Split of the data to be used to perform operation.')
     parser.add_argument('--dataset', type=str, default='cvpr2016_cub',
                         choices=['cvpr2016_cub'], help='Dataset to train.')
@@ -115,7 +115,8 @@ def get_arguments():
     parser.add_argument('--train_bn_proba', type=float, default=1.0,
                         help='Probability that batch norm/dropout layers are in train mode during training')
     # Text feature extractor
-    parser.add_argument('--word_embed_dim', type=int, default=128)
+    parser.add_argument('--word_embed_trainable', type=bool, default=False)
+    parser.add_argument('--word_embed_dim', type=int, default=300) # this should be equal to the word2vec dimension
     parser.add_argument('--vocab_size', type=int, default=10000)
     parser.add_argument('--text_feature_extractor', type=str, default='simple_bi_lstm', choices=['simple_bi_lstm'])
     parser.add_argument('--text_maxlen', type=int, default=100, help='Maximal length of the text description in tokens')
@@ -342,8 +343,8 @@ def get_image_feature_extractor(images: tf.Tensor, flags, is_training=False, sco
     return h
 
 
-def get_simple_bi_lstm(text, text_length, flags, embedding_size=512, is_training=False, scope='text_feature_extractor',
-                       reuse=None):
+def get_simple_bi_lstm(text, text_length, flags, embedding_initializer=None, embedding_size=512,
+                       is_training=False, scope='text_feature_extractor', reuse=None):
     """
 
     :param text: input text sequence, BTC
@@ -356,10 +357,18 @@ def get_simple_bi_lstm(text, text_length, flags, embedding_size=512, is_training
     """
 
     with tf.variable_scope(scope, reuse=reuse):
+        if embedding_initializer is not None:
+            word_embed_dim = None
+            vocab_size = None
+        else:
+            word_embed_dim = flags.word_embed_dim
+            vocab_size = flags.vocab_size
         h = tf.contrib.layers.embed_sequence(text,
-                                             vocab_size=flags.vocab_size,
-                                             embed_dim=flags.word_embed_dim,
-                                             trainable=True,
+                                             vocab_size=vocab_size,
+                                             initializer=embedding_initializer,
+                                             embed_dim=word_embed_dim,
+                                             trainable=flags.word_embed_trainable and is_training,
+                                             reuse=tf.AUTO_REUSE,
                                              scope='TextEmbedding')
 
         cells_fw = [tf.nn.rnn_cell.LSTMCell(size) for size in [256]]
@@ -381,8 +390,8 @@ def get_simple_bi_lstm(text, text_length, flags, embedding_size=512, is_training
     return h
 
 
-def get_text_feature_extractor(text, text_length, flags, embedding_size=512, is_training=False,
-                               scope='text_feature_extractor', reuse=None):
+def get_text_feature_extractor(text, text_length, flags, embedding_size=512, embedding_initializer=None,
+                               is_training=False, scope='text_feature_extractor', reuse=None):
     """
         Text extractor selector
     :param text: tensor of input texts tokenized as integers in the format BL
@@ -400,7 +409,8 @@ def get_text_feature_extractor(text, text_length, flags, embedding_size=512, is_
         text_length = tf.reshape(text_length, shape=[-1])
 
     if flags.text_feature_extractor == 'simple_bi_lstm':
-        h = get_simple_bi_lstm(text, text_length, flags=flags, embedding_size=embedding_size, is_training=is_training,
+        h = get_simple_bi_lstm(text, text_length, flags=flags, embedding_size=embedding_size,
+                               embedding_initializer=embedding_initializer, is_training=is_training,
                                reuse=reuse, scope=scope)
 
     if len(original_shape) == 3:
@@ -438,7 +448,7 @@ def get_distance_head(embedding_mod1, embedding_mod2, flags, is_training, scope=
         return euclidian
 
 
-def get_inference_graph(images, text, text_length, flags, is_training, reuse=False):
+def get_inference_graph(images, text, text_length, flags, is_training, embedding_initializer=None, reuse=False):
     """
         Creates text embedding, image embedding and links them using a distance metric.
         Ouputs logits that can be used for training and inference, as well as text and image embeddings.
@@ -450,8 +460,8 @@ def get_inference_graph(images, text, text_length, flags, is_training, reuse=Fal
     :param reuse:
     :return:
     """
-    image_embeddings, text_embeddings = get_embeddings(images, text, text_length, 
-                                                       flags=flags, is_training=is_training, reuse=reuse)
+    image_embeddings, text_embeddings = get_embeddings(images, text, text_length, flags=flags, is_training=is_training,
+                                                       embedding_initializer=embedding_initializer, reuse=reuse)
     with tf.variable_scope('Model'):
         # Here we compute logits of correctly matching text to a given image.
         # We could also compute logits of correctly matching an image to a given text by reversing
@@ -462,12 +472,13 @@ def get_inference_graph(images, text, text_length, flags, is_training, reuse=Fal
     return logits, image_embeddings, text_embeddings
 
 
-def get_embeddings(images, text, text_length, flags, is_training, reuse=False):
+def get_embeddings(images, text, text_length, flags, is_training, embedding_initializer=None, reuse=False):
     with tf.variable_scope('Model'):
         image_embeddings = get_image_feature_extractor(images, flags, is_training=is_training,
                                                        scope='image_feature_extractor', reuse=reuse)
         text_embedding_size = image_embeddings.get_shape().as_list()[-1]
         text_embeddings = get_text_feature_extractor(text, text_length, flags, embedding_size=text_embedding_size,
+                                                     embedding_initializer=embedding_initializer,
                                                      is_training=is_training, scope='text_feature_extractor',
                                                      reuse=reuse)
     return image_embeddings, text_embeddings
@@ -735,7 +746,11 @@ def train(flags):
                                    num_images=flags.num_images, num_texts=flags.num_texts,
                                    image_size=image_size, max_text_len=max_text_len, scope='inputs')
 
+        embedding_initializer = np.zeros(shape=(flags.vocab_size, flags.word_embed_dim), dtype=np.float32)
+        vocab = dataset_splits[flags.train_split].word_vectors_idx
+        embedding_initializer[:len(vocab)] = vocab
         logits, image_embeddings, text_embeddings = get_inference_graph(images=images_pl, text=text_pl,
+                                                                        embedding_initializer=embedding_initializer,
                                                                         text_length=text_len_pl, flags=flags,
                                                                         is_training=True, reuse=False)
         loss_txt2img = tf.reduce_mean(

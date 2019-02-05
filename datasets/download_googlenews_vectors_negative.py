@@ -10,6 +10,7 @@ FILE_ID = '0B7XkCwpI5KDYNlNUTTlSS21pQmM'
 FILE_NAME_WORD2VEC = 'GoogleNews-vectors-negative300.bin'
 
 DEFAULT_WORD2VEC_DIR = os.path.join(os.sep, 'mnt', 'datasets', 'public', 'research', 'GoogleNews_vectors_negative300')
+# DEFAULT_WORD2VEC_DIR = 'datasets/GoogleNews_vectors_negative300'
 
 
 def download_and_uncompress_dataset(dataset_dir: str):
