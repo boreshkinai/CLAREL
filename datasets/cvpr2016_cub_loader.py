@@ -71,8 +71,8 @@ class Cvpr2016CubLoader(Dataset):
             pickle.dump(self, f)
 
     def _extract_image_features(self):
-        # Load pretrained model
         image_model = InceptionV3Loader()
+        print("Preprocessing images with a pretrained model...")
         image_embeddings = []
         for images, _, _ in tqdm(self.sequential_evaluation_batches(batch_size=10, num_images=10, num_texts=1)):
             shape_in = list(images.shape)
