@@ -713,7 +713,7 @@ def eval_acc(flags: Namespace, datasets: Dict[str, Dataset]):
 
 
 def get_image_fe_restorer(flags: Namespace):
-    if flags.image_feature_extractor == 'inception_v3':
+    if flags.image_feature_extractor == 'inception_v3' and flags.image_fe_trainable:
         vars = tf.get_collection(key=tf.GraphKeys.MODEL_VARIABLES, scope='.*InceptionV3')
 
         def name_in_checkpoint(var: tf.Variable):
