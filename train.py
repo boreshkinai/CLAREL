@@ -636,8 +636,13 @@ class ModelLoader:
         num_correct_img2txt = 0.0
         num_tot = 0.0
         for i in trange(num_samples):
-            images, texts, text_len, match_labels = data_set.next_batch(
-                batch_size=self.batch_size, num_images=self.flags.num_images, num_texts=self.flags.num_texts)
+            if self.flags.image_fe_trainable:
+                images, texts, text_len, match_labels = data_set.next_batch(
+                    batch_size=self.batch_size, num_images=self.flags.num_images, num_texts=self.flags.num_texts)
+            else:
+                images, texts, text_len, match_labels = data_set.next_batch_features(
+                    batch_size=self.batch_size, num_images=self.flags.num_images, num_texts=self.flags.num_texts)
+
             labels_txt2img, labels_img2txt = match_labels
             feed_dict = {self.images_pl: images.astype(dtype=np.float32),
                          self.text_pl: texts,
@@ -662,9 +667,12 @@ class ModelLoader:
         num_correct_img2txt = 0.0
         num_tot = 0.0
         image_embeddings, text_embeddings = [], []
-        for images, texts, text_lengths in tqdm(
-            data_set.sequential_evaluation_batches(batch_size=batch_size, 
-                                                   num_images=self.num_images, num_texts=self.num_texts)):
+        if self.flags.image_fe_trainable:
+            batch_generator = data_set.sequential_evaluation_batches
+        else:
+            batch_generator = data_set.sequential_evaluation_batches_features
+        for images, texts, text_lengths in tqdm(batch_generator(batch_size=batch_size,
+                                                                num_images=self.num_images, num_texts=self.num_texts)):
             image_embeddings_batch, text_embeddings_batch = self.predict(images, texts, text_lengths)
             image_embeddings.append(image_embeddings_batch)
             text_embeddings.append(text_embeddings_batch)
@@ -856,12 +864,15 @@ def train(flags):
             for step in range(checkpoint_step, flags.number_of_steps):
                 # get batch of data to compute classification loss
                 dt_batch = time.time()
-                images, text, text_length, match_labels = dataset_splits[flags.train_split].next_batch(
-                    batch_size=flags.train_batch_size, num_images=flags.num_images, num_texts=flags.num_texts)
+                if flags.image_fe_trainable:
+                    images, text, text_length, match_labels = dataset_splits[flags.train_split].next_batch(
+                        batch_size=flags.train_batch_size, num_images=flags.num_images, num_texts=flags.num_texts)
+                else:
+                    images, text, text_length, match_labels = dataset_splits[flags.train_split].next_batch_features(
+                        batch_size=flags.train_batch_size, num_images=flags.num_images, num_texts=flags.num_texts)
+
                 labels_txt2img, labels_img2txt = match_labels
                 dt_batch = time.time() - dt_batch
-                # if flags.augment:
-                #     images = image_augment(images)
 
                 feed_dict = {images_pl: images.astype(dtype=np.float32), text_len_pl: text_length,
                              text_pl: text,
