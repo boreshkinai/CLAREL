@@ -25,25 +25,11 @@ from typing import List, Dict, Set
 from common.util import Namespace
 from datasets import Dataset
 from datasets.dataset_list import get_dataset_splits
-from common.metrics import ap_at_k
+from common.metrics import ap_at_k_prototypes
 
-# TODO: connect to borgy
-
-'''
-Execute as a script:
-go to deep-prior root and run
-export PYTHONPATH=`pwd`
-export CUDA_VISIBLE_DEVICES=0
-go to deep-prior/deep_prior/experiements/mini-imagenet and run
-python train_text_embedding.py
-'''
 
 tf.logging.set_verbosity(tf.logging.INFO)
 logging.basicConfig(level=logging.INFO)
-
-
-DATA_DIR = "/mnt/scratch/ssense/data_dumps/images_png_dump_256"
-
 
 def get_arguments():
     parser = argparse.ArgumentParser()
@@ -52,7 +38,7 @@ def get_arguments():
                         choices=['train', 'eval', 'test'])
     # Dataset parameters
     parser.add_argument('--data_dir', type=str, default=None, help='Path to the data.')
-    parser.add_argument('--train_split', type=str, default='train', choices=['train', 'trainval'],
+    parser.add_argument('--train_split', type=str, default='trainval', choices=['train', 'trainval'],
                         help='Split of the data to be used to perform operation.')
     parser.add_argument('--dataset', type=str, default='cvpr2016_cub',
                         choices=['cvpr2016_cub'], help='Dataset to train.')
@@ -681,10 +667,10 @@ class ModelLoader:
         image_embeddings = np.concatenate(image_embeddings)
         text_embeddings = np.concatenate(text_embeddings)
         
-        ap50, top1_acc = ap_at_k(support_embeddings=text_embeddings, query_embeddings=image_embeddings, 
-                 class_ids=data_set.image_classes, k=50)
+        metrics = ap_at_k_prototypes(support_embeddings=text_embeddings, query_embeddings=image_embeddings,
+                                     class_ids=data_set.image_classes, k=50, num_texts=[1, 2, 5, 10, 20, 30, 40])
         
-        return {'AP@50': ap50, 'Top-1 Acc': top1_acc}, image_embeddings, text_embeddings
+        return metrics, image_embeddings, text_embeddings
 
 
 def eval_acc_batch(flags: Namespace, datasets: Dict[str, Dataset]):
@@ -695,7 +681,7 @@ def eval_acc_batch(flags: Namespace, datasets: Dict[str, Dataset]):
     for data_name, dataset in datasets.items():
         results_eval = model.eval_acc_batch(data_set=dataset, num_samples=flags.num_samples_eval)
         for result_name, result_val in results_eval.items():
-            results["evaluation_batch/" + result_name + "_" + data_name] = result_val
+            results["evaluation_batch_%s/"%(data_name) + result_name] = result_val
             logging.info("accuracy_%s: %.3g" % (result_name + "_" + data_name, result_val))
 
     log_dir = get_logdir_name(flags)
@@ -712,7 +698,7 @@ def eval_acc(flags: Namespace, datasets: Dict[str, Dataset]):
     for data_name, dataset in datasets.items():
         results_eval, _, _ = model.eval_acc(data_set=dataset, batch_size=10)
         for result_name, result_val in results_eval.items():
-            results["evaluation_full/" + result_name + "_" + data_name] = result_val
+            results["evaluation_full_%s/"%(data_name) + result_name] = result_val
             logging.info("accuracy_%s: %.3g" % (result_name + "_" + data_name, result_val))
 
     log_dir = get_logdir_name(flags)
