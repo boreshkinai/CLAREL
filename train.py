@@ -588,7 +588,7 @@ class ModelLoader:
         with tf.Graph().as_default():
             images_pl, text_pl, text_len_pl, match_labels_txt2img, match_labels_img2txt = get_input_placeholders(
                 batch_size=batch_size, num_images=num_images, num_texts=num_texts, max_text_len=max_text_len,
-                image_size=image_size, scope='inputs')
+                image_size=image_size, flags=flags, scope='inputs')
             if batch_size:
                 logits, image_embeddings, text_embeddings = get_inference_graph(
                     images=images_pl, text=text_pl, text_length=text_len_pl, flags=flags, is_training=False)
@@ -762,7 +762,8 @@ def train(flags):
         images_pl, text_pl, text_len_pl, match_labels_txt2img_pl, match_labels_img2txt_pl = \
             get_input_placeholders(batch_size=flags.train_batch_size,
                                    num_images=flags.num_images, num_texts=flags.num_texts,
-                                   image_size=image_size, max_text_len=max_text_len, scope='inputs')
+                                   image_size=image_size, max_text_len=max_text_len,
+                                   flags=flags, scope='inputs')
 
         embedding_initializer = np.zeros(shape=(flags.vocab_size, flags.word_embed_dim), dtype=np.float32)
         vocab = dataset_splits[flags.train_split].word_vectors_idx
