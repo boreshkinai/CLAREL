@@ -86,6 +86,8 @@ def get_arguments():
     # Architecture parameters
     parser.add_argument('--dropout', type=float, default=None)
     parser.add_argument('--weight_decay', type=float, default=0.0005)
+    parser.add_argument('--embedding_size', type=int, default=1024)
+    parser.add_argument('--embedding_pooled', type=bool, default=True)
     # Image feature extractor
     parser.add_argument('--image_feature_extractor', type=str, default='inception_v3',
                         choices=['simple_res_net', 'inception_v3'], help='Which feature extractor to use')
@@ -107,11 +109,11 @@ def get_arguments():
     parser.add_argument('--text_feature_extractor', type=str, default='simple_bi_lstm', choices=['simple_bi_lstm'])
     parser.add_argument('--text_maxlen', type=int, default=100, help='Maximal length of the text description in tokens')
     parser.add_argument('--shuffle_text_in_batch', type=bool, default=False)
+    parser.add_argument('--rnn_size', type=int, default=256)
 
-    parser.add_argument('--embedding_size', type=int, default=1024)
-    parser.add_argument('--embedding_pooled', type=bool, default=True)
+    
 
-    parser.add_argument('--metric_multiplier_init', type=float, default=10.0, help='multiplier of cosine metric')
+    parser.add_argument('--metric_multiplier_init', type=float, default=5.0, help='multiplier of cosine metric')
     parser.add_argument('--metric_multiplier_trainable', type=bool, default=False,
                         help='multiplier of cosine metric trainability')
     parser.add_argument('--polynomial_metric_order', type=int, default=1)
@@ -330,6 +332,18 @@ def get_image_feature_extractor(images: tf.Tensor, flags, is_training=False, sco
         h = images
 
     h = tf.reduce_mean(h, axis=1, keepdims=False)
+    
+    conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
+    activation_fn = ACTIVATION_MAP[flags.activation]
+    with conv2d_arg_scope, dropout_arg_scope:
+        if flags.dropout:
+            h = slim.dropout(h, scope='image_dropout', keep_prob=1.0 - flags.dropout)
+
+        # Bottleneck layer
+        if flags.embedding_size:
+            h = slim.fully_connected(h, num_outputs=flags.embedding_size,
+                                     activation_fn=activation_fn, normalizer_fn=None,
+                                     scope='image_feature_adaptor')
     return h
 
 
@@ -361,8 +375,8 @@ def get_simple_bi_lstm(text, text_length, flags, embedding_initializer=None, emb
                                              reuse=tf.AUTO_REUSE,
                                              scope='TextEmbedding')
 
-        cells_fw = [tf.nn.rnn_cell.LSTMCell(size) for size in [256]]
-        cells_bw = [tf.nn.rnn_cell.LSTMCell(size) for size in [256]]
+        cells_fw = [tf.nn.rnn_cell.LSTMCell(size) for size in [flags.rnn_size]]
+        cells_bw = [tf.nn.rnn_cell.LSTMCell(size) for size in [flags.rnn_size]]
 #         initial_states_fw = [cell.zero_state(text.get_shape()[0], dtype=tf.float32) for cell in cells_fw]
 #         initial_states_bw = [cell.zero_state(text.get_shape()[0], dtype=tf.float32) for cell in cells_bw]
 
@@ -375,8 +389,22 @@ def get_simple_bi_lstm(text, text_length, flags, embedding_initializer=None, emb
                                                                sequence_length=text_length)
         mask = tf.expand_dims(tf.sequence_mask(text_length, maxlen=tf.shape(text)[1], dtype=tf.float32), axis=-1)
         h = tf.reduce_sum(tf.multiply(h, mask), axis=[1]) / tf.reduce_sum(mask, axis=[1])
-        # this is the adaptor to match the size of the image extractor
-        h = tf.contrib.layers.fully_connected(h, num_outputs=embedding_size)
+#         # this is the adaptor to match the size of the image extractor
+#         h = tf.contrib.layers.fully_connected(h, num_outputs=embedding_size)
+        
+        conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
+        activation_fn = ACTIVATION_MAP[flags.activation]
+        with conv2d_arg_scope, dropout_arg_scope:
+            if flags.dropout:
+                h = slim.dropout(h, scope='text_dropout', keep_prob=1.0 - flags.dropout)
+
+            # Bottleneck layer
+            if flags.embedding_size:
+                h = slim.fully_connected(h, num_outputs=flags.embedding_size,
+                                         activation_fn=activation_fn, normalizer_fn=None,
+                                         scope='text_feature_adaptor')
+        
+        
     return h
 
 
@@ -668,7 +696,7 @@ class ModelLoader:
         text_embeddings = np.concatenate(text_embeddings)
         
         metrics = ap_at_k_prototypes(support_embeddings=text_embeddings, query_embeddings=image_embeddings,
-                                     class_ids=data_set.image_classes, k=50, num_texts=[1, 2, 5, 10, 20, 30, 40])
+                                     class_ids=data_set.image_classes, k=50, num_texts=[1, 5, 10, 20, 40])
         
         return metrics, image_embeddings, text_embeddings
 
