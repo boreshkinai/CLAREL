@@ -112,7 +112,8 @@ def get_arguments():
     parser.add_argument('--shuffle_text_in_batch', type=bool, default=False)
     parser.add_argument('--rnn_size', type=int, default=512)
     parser.add_argument('--num_text_cnn_filt', type=int, default=64)
-    parser.add_argument('--num_text_cnn_layers', type=int, default=2)
+    parser.add_argument('--num_text_cnn_units', type=int, default=2)
+    parser.add_argument('--num_text_cnn_blocks', type=int, default=2)
 
     
 
@@ -382,9 +383,17 @@ def get_cnn_bi_lstm(text, text_length, flags, embedding_initializer=None,
         print(h.get_shape().as_list())
         conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
         with conv2d_arg_scope, dropout_arg_scope:
-            for i in range(flags.num_text_cnn_layers):
-                h = slim.conv2d(h, num_outputs=math.pow(2, i)*flags.num_text_cnn_filt, kernel_size=[1, 3], stride=1,
-                                scope='text_conv' + str(i), padding='SAME', activation_fn=activation_fn)
+            for i in range(flags.num_text_cnn_blocks):
+                shortcut = slim.conv2d(h, num_outputs=math.pow(2, i)*flags.num_text_cnn_filt, kernel_size=1, stride=1,
+                                       activation_fn=None, scope='shortcut' + str(i), padding='SAME')
+                for j in range(flags.num_text_cnn_units):
+                    h = slim.conv2d(h, num_outputs=math.pow(2, i)*flags.num_text_cnn_filt, kernel_size=[1, 3], stride=1,
+                                    scope='text_conv' + str(i) + "_" + str(j), padding='SAME', activation_fn=None)
+                    if j < (flags.num_text_cnn_units - 1):
+                        h = activation_fn(h, name='activation_' + str(i) + '_' + str(j))
+                h = h + shortcut
+                h = activation_fn(h, name='activation_' + str(i) + '_' + str(j))
+
                 h = slim.max_pool2d(h, kernel_size=[1, 2], stride=[1, 2], padding='SAME', scope='text_max_pool' + str(i))
                 text_length = tf.cast(tf.ceil(tf.div(tf.cast(text_length, tf.float32), 2.0)), text_length.dtype)
         h = tf.squeeze(h, [1])
@@ -553,7 +562,7 @@ def get_inference_graph(images, text, text_length, flags, is_training, embedding
     """
     image_embeddings, text_embeddings = get_embeddings(images, text, text_length, flags=flags, is_training=is_training,
                                                        embedding_initializer=embedding_initializer, reuse=reuse)
-    with tf.variable_scope('Model', reuse=tf.AUTO_REUSE):
+    with tf.variable_scope('Model', reuse=True):
         # Here we compute logits of correctly matching text to a given image.
         # We could also compute logits of correctly matching an image to a given text by reversing
         # image_embeddings and text_embeddings
