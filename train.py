@@ -107,7 +107,7 @@ def get_arguments():
     parser.add_argument('--word_embed_trainable', type=bool, default=False)
     parser.add_argument('--word_embed_dim', type=int, default=300) # this should be equal to the word2vec dimension
     parser.add_argument('--vocab_size', type=int, default=10000)
-    parser.add_argument('--text_feature_extractor', type=str, default='simple_bi_lstm', choices=['simple_bi_lstm', 'cnn_bi_lstm'])
+    parser.add_argument('--text_feature_extractor', type=str, default='cnn_bi_lstm', choices=['simple_bi_lstm', 'cnn_bi_lstm'])
     parser.add_argument('--text_maxlen', type=int, default=100, help='Maximal length of the text description in tokens')
     parser.add_argument('--shuffle_text_in_batch', type=bool, default=False)
     parser.add_argument('--rnn_size', type=int, default=512)
@@ -362,9 +362,7 @@ def get_cnn_bi_lstm(text, text_length, flags, embedding_initializer=None,
     :param reuse:
     :return: the text embedding, BC
     """
-    conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
     activation_fn = ACTIVATION_MAP[flags.activation]
-
     with tf.variable_scope(scope, reuse=reuse):
         if embedding_initializer is not None:
             word_embed_dim = None
@@ -379,25 +377,34 @@ def get_cnn_bi_lstm(text, text_length, flags, embedding_initializer=None,
                                              trainable=flags.word_embed_trainable and is_training,
                                              reuse=tf.AUTO_REUSE,
                                              scope='TextEmbedding')
-
-        h = tf.expand_dims(h, -2)
+        
+        h = tf.expand_dims(h, 1)
         print(h.get_shape().as_list())
+        conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
         with conv2d_arg_scope, dropout_arg_scope:
-            for i in flags.num_text_cnn_layers:
+            for i in range(flags.num_text_cnn_layers):
                 h = slim.conv2d(h, num_outputs=math.pow(2, i)*flags.num_text_cnn_filt, kernel_size=[1, 3], stride=1,
                                 scope='text_conv' + str(i), padding='SAME', activation_fn=activation_fn)
                 h = slim.max_pool2d(h, kernel_size=[1, 2], stride=[1, 2], padding='SAME', scope='text_max_pool' + str(i))
-        tf.squeeze(h, -2)
+                text_length = tf.cast(tf.ceil(tf.div(tf.cast(text_length, tf.float32), 2.0)), text_length.dtype)
+        h = tf.squeeze(h, [1])
+        
         print(h.get_shape().as_list())
+        print(text_length.get_shape().as_list())
+        
 
         cells_fw = [tf.nn.rnn_cell.LSTMCell(size) for size in [flags.rnn_size]]
         cells_bw = [tf.nn.rnn_cell.LSTMCell(size) for size in [flags.rnn_size]]
         h, *_ = tf.contrib.rnn.stack_bidirectional_dynamic_rnn(cells_fw=cells_fw, cells_bw=cells_bw,
                                                                inputs=h, dtype=tf.float32,
                                                                sequence_length=text_length)
-        mask = tf.expand_dims(tf.sequence_mask(text_length, maxlen=tf.shape(text)[1], dtype=tf.float32), axis=-1)
+        
+        mask = tf.expand_dims(tf.sequence_mask(text_length, 
+                                               maxlen=h.get_shape().as_list()[1], dtype=tf.float32), axis=-1)
+        print(tf.shape(h)[1])
+        print(mask.get_shape().as_list())
         h = tf.reduce_sum(tf.multiply(h, mask), axis=[1]) / tf.reduce_sum(mask, axis=[1])
-
+        conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
         with conv2d_arg_scope, dropout_arg_scope:
             if flags.dropout:
                 h = slim.dropout(h, scope='text_dropout', keep_prob=1.0 - flags.dropout)
