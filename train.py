@@ -52,13 +52,13 @@ def get_arguments():
     parser.add_argument('--log_dir', type=str, default='', help='Base log dir')
     parser.add_argument('--exp_dir', type=str, default=None, help='experiement directory for Borgy')
     # Batch parameters
-    parser.add_argument('--train_batch_size', type=int, default=24, help='Training batch size.')
+    parser.add_argument('--train_batch_size', type=int, default=32, help='Training batch size.')
     parser.add_argument('--num_images', type=int, default=1, help='Number of image samples per image/text pair.')
     parser.add_argument('--num_texts', type=int, default=5, help='Number of text samples per image/text pair.')
-    parser.add_argument('--init_learning_rate', type=float, default=0.001, help='Initial learning rate.')
+    parser.add_argument('--init_learning_rate', type=float, default=0.1, help='Initial learning rate.')
     parser.add_argument('--save_summaries_secs', type=int, default=60, help='Time between saving summaries')
     parser.add_argument('--save_interval_secs', type=int, default=60, help='Time between saving model?')
-    parser.add_argument('--optimizer', type=str, default='adam', choices=['sgd', 'adam'])
+    parser.add_argument('--optimizer', type=str, default='sgd', choices=['sgd', 'adam'])
     parser.add_argument('--augment', type=bool, default=False)
     # Learning rate paramteres
     parser.add_argument('--lr_anneal', type=str, default='exp', choices=['exp'])
@@ -84,7 +84,7 @@ def get_arguments():
                         default='./logs/batch_size-32-lr-0.122-lr_anneal-cos-epochs-100.0-dropout-1.0-optimizer-sgd-weight_decay-0.0005-augment-False-num_filters-64-feature_extractor-simple_res_net-task_encoder-class_mean-attention_num_filters-32/train',
                         help='Path to the pretrained model to run the nearest neigbor baseline test.')
     # Architecture parameters
-    parser.add_argument('--dropout', type=float, default=None)
+    parser.add_argument('--dropout', type=float, default=0.25)
     parser.add_argument('--weight_decay', type=float, default=0.0005)
     parser.add_argument('--embedding_size', type=int, default=1024)
     parser.add_argument('--embedding_pooled', type=bool, default=True)
@@ -109,7 +109,7 @@ def get_arguments():
     parser.add_argument('--text_feature_extractor', type=str, default='simple_bi_lstm', choices=['simple_bi_lstm'])
     parser.add_argument('--text_maxlen', type=int, default=100, help='Maximal length of the text description in tokens')
     parser.add_argument('--shuffle_text_in_batch', type=bool, default=False)
-    parser.add_argument('--rnn_size', type=int, default=256)
+    parser.add_argument('--rnn_size', type=int, default=512)
 
     
 
