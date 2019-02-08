@@ -7,6 +7,7 @@ from __future__ import print_function
 
 import os
 import numpy as np
+import math
 import argparse
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
@@ -106,10 +107,12 @@ def get_arguments():
     parser.add_argument('--word_embed_trainable', type=bool, default=False)
     parser.add_argument('--word_embed_dim', type=int, default=300) # this should be equal to the word2vec dimension
     parser.add_argument('--vocab_size', type=int, default=10000)
-    parser.add_argument('--text_feature_extractor', type=str, default='simple_bi_lstm', choices=['simple_bi_lstm'])
+    parser.add_argument('--text_feature_extractor', type=str, default='simple_bi_lstm', choices=['simple_bi_lstm', 'cnn_bi_lstm'])
     parser.add_argument('--text_maxlen', type=int, default=100, help='Maximal length of the text description in tokens')
     parser.add_argument('--shuffle_text_in_batch', type=bool, default=False)
     parser.add_argument('--rnn_size', type=int, default=512)
+    parser.add_argument('--num_text_cnn_filt', type=int, default=64)
+    parser.add_argument('--num_text_cnn_layers', type=int, default=2)
 
     
 
@@ -347,7 +350,68 @@ def get_image_feature_extractor(images: tf.Tensor, flags, is_training=False, sco
     return h
 
 
-def get_simple_bi_lstm(text, text_length, flags, embedding_initializer=None, embedding_size=512,
+def get_cnn_bi_lstm(text, text_length, flags, embedding_initializer=None,
+                       is_training=False, scope='text_feature_extractor', reuse=None):
+    """
+
+    :param text: input text sequence, BTC
+    :param text_length:  lengths of sequences in the batch, B
+    :param flags:  general settings of the overall architecture
+    :param is_training:
+    :param scope:
+    :param reuse:
+    :return: the text embedding, BC
+    """
+    conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
+    activation_fn = ACTIVATION_MAP[flags.activation]
+
+    with tf.variable_scope(scope, reuse=reuse):
+        if embedding_initializer is not None:
+            word_embed_dim = None
+            vocab_size = None
+        else:
+            word_embed_dim = flags.word_embed_dim
+            vocab_size = flags.vocab_size
+        h = tf.contrib.layers.embed_sequence(text,
+                                             vocab_size=vocab_size,
+                                             initializer=embedding_initializer,
+                                             embed_dim=word_embed_dim,
+                                             trainable=flags.word_embed_trainable and is_training,
+                                             reuse=tf.AUTO_REUSE,
+                                             scope='TextEmbedding')
+
+        h = tf.expand_dims(h, -2)
+        print(h.get_shape().as_list())
+        with conv2d_arg_scope, dropout_arg_scope:
+            for i in flags.num_text_cnn_layers:
+                h = slim.conv2d(h, num_outputs=math.pow(2, i)*flags.num_text_cnn_filt, kernel_size=[1, 3], stride=1,
+                                scope='text_conv' + str(i), padding='SAME', activation_fn=activation_fn)
+                h = slim.max_pool2d(h, kernel_size=[1, 2], stride=[1, 2], padding='SAME', scope='text_max_pool' + str(i))
+        tf.squeeze(h, -2)
+        print(h.get_shape().as_list())
+
+        cells_fw = [tf.nn.rnn_cell.LSTMCell(size) for size in [flags.rnn_size]]
+        cells_bw = [tf.nn.rnn_cell.LSTMCell(size) for size in [flags.rnn_size]]
+        h, *_ = tf.contrib.rnn.stack_bidirectional_dynamic_rnn(cells_fw=cells_fw, cells_bw=cells_bw,
+                                                               inputs=h, dtype=tf.float32,
+                                                               sequence_length=text_length)
+        mask = tf.expand_dims(tf.sequence_mask(text_length, maxlen=tf.shape(text)[1], dtype=tf.float32), axis=-1)
+        h = tf.reduce_sum(tf.multiply(h, mask), axis=[1]) / tf.reduce_sum(mask, axis=[1])
+
+        with conv2d_arg_scope, dropout_arg_scope:
+            if flags.dropout:
+                h = slim.dropout(h, scope='text_dropout', keep_prob=1.0 - flags.dropout)
+
+            # Bottleneck layer
+            if flags.embedding_size:
+                h = slim.fully_connected(h, num_outputs=flags.embedding_size,
+                                         activation_fn=activation_fn, normalizer_fn=None,
+                                         scope='text_feature_adaptor')
+
+    return h
+
+
+def get_simple_bi_lstm(text, text_length, flags, embedding_initializer=None,
                        is_training=False, scope='text_feature_extractor', reuse=None):
     """
 
@@ -389,9 +453,7 @@ def get_simple_bi_lstm(text, text_length, flags, embedding_initializer=None, emb
                                                                sequence_length=text_length)
         mask = tf.expand_dims(tf.sequence_mask(text_length, maxlen=tf.shape(text)[1], dtype=tf.float32), axis=-1)
         h = tf.reduce_sum(tf.multiply(h, mask), axis=[1]) / tf.reduce_sum(mask, axis=[1])
-#         # this is the adaptor to match the size of the image extractor
-#         h = tf.contrib.layers.fully_connected(h, num_outputs=embedding_size)
-        
+
         conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
         activation_fn = ACTIVATION_MAP[flags.activation]
         with conv2d_arg_scope, dropout_arg_scope:
@@ -408,7 +470,7 @@ def get_simple_bi_lstm(text, text_length, flags, embedding_initializer=None, emb
     return h
 
 
-def get_text_feature_extractor(text, text_length, flags, embedding_size=512, embedding_initializer=None,
+def get_text_feature_extractor(text, text_length, flags, embedding_initializer=None,
                                is_training=False, scope='text_feature_extractor', reuse=None):
     """
         Text extractor selector
@@ -427,7 +489,11 @@ def get_text_feature_extractor(text, text_length, flags, embedding_size=512, emb
         text_length = tf.reshape(text_length, shape=[-1])
 
     if flags.text_feature_extractor == 'simple_bi_lstm':
-        h = get_simple_bi_lstm(text, text_length, flags=flags, embedding_size=embedding_size,
+        h = get_simple_bi_lstm(text, text_length, flags=flags,
+                               embedding_initializer=embedding_initializer, is_training=is_training,
+                               reuse=reuse, scope=scope)
+    elif flags.text_feature_extractor == 'cnn_bi_lstm':
+        h = get_cnn_bi_lstm(text, text_length, flags=flags,
                                embedding_initializer=embedding_initializer, is_training=is_training,
                                reuse=reuse, scope=scope)
 
@@ -480,7 +546,7 @@ def get_inference_graph(images, text, text_length, flags, is_training, embedding
     """
     image_embeddings, text_embeddings = get_embeddings(images, text, text_length, flags=flags, is_training=is_training,
                                                        embedding_initializer=embedding_initializer, reuse=reuse)
-    with tf.variable_scope('Model'):
+    with tf.variable_scope('Model', reuse=tf.AUTO_REUSE):
         # Here we compute logits of correctly matching text to a given image.
         # We could also compute logits of correctly matching an image to a given text by reversing
         # image_embeddings and text_embeddings
@@ -494,8 +560,7 @@ def get_embeddings(images, text, text_length, flags, is_training, embedding_init
     with tf.variable_scope('Model'):
         image_embeddings = get_image_feature_extractor(images, flags, is_training=is_training,
                                                        scope='image_feature_extractor', reuse=reuse)
-        text_embedding_size = image_embeddings.get_shape().as_list()[-1]
-        text_embeddings = get_text_feature_extractor(text, text_length, flags, embedding_size=text_embedding_size,
+        text_embeddings = get_text_feature_extractor(text, text_length, flags,
                                                      embedding_initializer=embedding_initializer,
                                                      is_training=is_training, scope='text_feature_extractor',
                                                      reuse=reuse)
