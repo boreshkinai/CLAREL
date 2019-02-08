@@ -32,20 +32,23 @@ import git
 os.environ['LANG'] = 'en_CA.UTF-8'
 
 if __name__ == "__main__":
-    exp_description = "sgd_optimizer_trainval"
+    exp_description = "word2vec_test"
 
     params = dict(
         repeat=list(range(0, 1)),  # used to repeate the same experiment
         dataset='cvpr2016_cub',
-        number_of_steps=[50000, 25000],
-        num_texts=[3, 5, 10],
-        num_images=[3],
+        number_of_steps=[100000],
+        num_texts=[5, 10],
+        num_images=1,
         optimizer=['sgd'], # 'sgd', 'adam'
         init_learning_rate=0.1,
         lr_decay_rate=10.0,
         train_batch_size=[32, 64],
 #         word_embed_dim=128,
-        metric_multiplier_init=[5.0],
+        metric_multiplier_init=[1.0, 5.0, 10.0],
+        rnn_size=512,
+        embedding_size=1024,
+        dropout=[0.25, 0.5],
     )
 
     parser = argparse.ArgumentParser()
