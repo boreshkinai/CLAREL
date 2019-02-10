@@ -107,7 +107,8 @@ def get_arguments():
     parser.add_argument('--word_embed_trainable', type=bool, default=False)
     parser.add_argument('--word_embed_dim', type=int, default=300) # this should be equal to the word2vec dimension
     parser.add_argument('--vocab_size', type=int, default=10000)
-    parser.add_argument('--text_feature_extractor', type=str, default='cnn_bi_lstm', choices=['simple_bi_lstm', 'cnn_bi_lstm'])
+    parser.add_argument('--text_feature_extractor', type=str, default='cnn_bi_lstm',
+                        choices=['simple_bi_lstm', 'cnn_bi_lstm', '2016cnn_bi_lstm'])
     parser.add_argument('--text_maxlen', type=int, default=100, help='Maximal length of the text description in tokens')
     parser.add_argument('--shuffle_text_in_batch', type=bool, default=False)
     parser.add_argument('--rnn_size', type=int, default=512)
@@ -351,6 +352,82 @@ def get_image_feature_extractor(images: tf.Tensor, flags, is_training=False, sco
     return h
 
 
+def get_2016cnn_bi_lstm(text, text_length, flags, embedding_initializer=None,
+                    is_training=False, scope='text_feature_extractor', reuse=None):
+    """
+
+    :param text: input text sequence, BTC
+    :param text_length:  lengths of sequences in the batch, B
+    :param flags:  general settings of the overall architecture
+    :param is_training:
+    :param scope:
+    :param reuse:
+    :return: the text embedding, BC
+    """
+    activation_fn = ACTIVATION_MAP[flags.activation]
+    with tf.variable_scope(scope, reuse=reuse):
+        if embedding_initializer is not None:
+            word_embed_dim = None
+            vocab_size = None
+        else:
+            word_embed_dim = flags.word_embed_dim
+            vocab_size = flags.vocab_size
+        h = tf.contrib.layers.embed_sequence(text,
+                                             vocab_size=vocab_size,
+                                             initializer=embedding_initializer,
+                                             embed_dim=word_embed_dim,
+                                             trainable=flags.word_embed_trainable and is_training,
+                                             reuse=tf.AUTO_REUSE,
+                                             scope='TextEmbedding')
+
+        h = tf.expand_dims(h, 1)
+        print(h.get_shape().as_list())
+        conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
+        with conv2d_arg_scope, dropout_arg_scope:
+
+            h = slim.conv2d(h, num_outputs=flags.num_text_cnn_filt, kernel_size=[1, 3],
+                            stride=1, scope='text_conv_1', padding='VALID', activation_fn=activation_fn)
+            h = slim.conv2d(h, num_outputs=flags.num_text_cnn_filt, kernel_size=[1, 2],
+                            stride=1, scope='text_conv_2', padding='VALID', activation_fn=activation_fn)
+
+            h = slim.max_pool2d(h, kernel_size=[1, 3], stride=[1, 3], padding='VALID',
+                                scope='text_max_pool_x3')
+
+            h = slim.conv2d(h, num_outputs=flags.num_text_cnn_filt, kernel_size=[1, 2],
+                            stride=1, scope='text_conv_3', padding='VALID', activation_fn=activation_fn)
+
+            text_length = tf.cast(tf.ceil(tf.div(tf.cast(text_length, tf.float32), 3.0)), text_length.dtype)
+
+        h = tf.squeeze(h, [1])
+
+        print(h.get_shape().as_list())
+        print(text_length.get_shape().as_list())
+
+        cells_fw = [tf.nn.rnn_cell.LSTMCell(size) for size in [flags.rnn_size]]
+        cells_bw = [tf.nn.rnn_cell.LSTMCell(size) for size in [flags.rnn_size]]
+        h, *_ = tf.contrib.rnn.stack_bidirectional_dynamic_rnn(cells_fw=cells_fw, cells_bw=cells_bw,
+                                                               inputs=h, dtype=tf.float32,
+                                                               sequence_length=text_length)
+
+        mask = tf.expand_dims(tf.sequence_mask(text_length,
+                                               maxlen=h.get_shape().as_list()[1], dtype=tf.float32), axis=-1)
+        print(tf.shape(h)[1])
+        print(mask.get_shape().as_list())
+        h = tf.reduce_sum(tf.multiply(h, mask), axis=[1]) / tf.reduce_sum(mask, axis=[1])
+        conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
+        with conv2d_arg_scope, dropout_arg_scope:
+            if flags.dropout:
+                h = slim.dropout(h, scope='text_dropout', keep_prob=1.0 - flags.dropout)
+
+            # Bottleneck layer
+            if flags.embedding_size:
+                h = slim.fully_connected(h, num_outputs=flags.embedding_size,
+                                         activation_fn=activation_fn, normalizer_fn=None,
+                                         scope='text_feature_adaptor')
+
+    return h
+
+
 def get_cnn_bi_lstm(text, text_length, flags, embedding_initializer=None,
                        is_training=False, scope='text_feature_extractor', reuse=None):
     """
@@ -512,6 +589,11 @@ def get_text_feature_extractor(text, text_length, flags, embedding_initializer=N
         h = get_cnn_bi_lstm(text, text_length, flags=flags,
                                embedding_initializer=embedding_initializer, is_training=is_training,
                                reuse=reuse, scope=scope)
+    elif flags.text_feature_extractor == '2016cnn_bi_lstm':
+        h = get_2016cnn_bi_lstm(text, text_length, flags=flags,
+                            embedding_initializer=embedding_initializer, is_training=is_training,
+                            reuse=reuse, scope=scope)
+
 
     if len(original_shape) == 3:
         h = tf.reshape(h, shape=([-1] + [original_shape[1], h.get_shape().as_list()[-1]]))
