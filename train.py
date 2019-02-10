@@ -205,6 +205,18 @@ class ScaledVarianceRandomNormal(init_ops.Initializer):
                                         dtype, seed=self.seed)
 
 
+def _get_fc_scope(is_training, flags):
+    scope = slim.arg_scope(
+        [slim.fully_connected],
+        activation_fn=ACTIVATION_MAP[flags.activation],
+        normalizer_fn=None,
+        trainable=True,
+        biases_initializer=None,
+        weights_regularizer=tf.contrib.layers.l2_regularizer(scale=flags.weight_decay),
+    )
+    return scope
+
+
 def _get_scope(is_training, flags):
     """
     Get slim scope parameters for the convolutional and dropout layers
@@ -273,15 +285,6 @@ def get_simple_res_net(images, flags, num_filters, is_training=False, reuse=None
                 kernel_size = h.shape.as_list()[-2]
                 h = slim.avg_pool2d(h, kernel_size=kernel_size, scope='avg_pool')
             h = slim.flatten(h)
-
-            if flags.dropout:
-                h = slim.dropout(h, scope='fc_dropout', keep_prob=1.0 - flags.dropout)
-
-            # Bottleneck layer
-            if flags.embedding_size:
-                h = slim.fully_connected(h, num_outputs=flags.embedding_size,
-                                         activation_fn=activation_fn, normalizer_fn=None,
-                                         scope='image_feature_adaptor')
     return h
 
 
@@ -339,16 +342,14 @@ def get_image_feature_extractor(images: tf.Tensor, flags, is_training=False, sco
     h = tf.reduce_mean(h, axis=1, keepdims=False)
     
     conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
-    activation_fn = ACTIVATION_MAP[flags.activation]
     with conv2d_arg_scope, dropout_arg_scope:
         if flags.dropout:
             h = slim.dropout(h, scope='image_dropout', keep_prob=1.0 - flags.dropout)
 
         # Bottleneck layer
         if flags.embedding_size:
-            h = slim.fully_connected(h, num_outputs=flags.embedding_size,
-                                     activation_fn=activation_fn, normalizer_fn=None,
-                                     scope='image_feature_adaptor')
+            with _get_fc_scope(is_training, flags):
+                h = slim.fully_connected(h, num_outputs=flags.embedding_size, scope='image_feature_adaptor')
     return h
 
 
@@ -421,10 +422,8 @@ def get_2016cnn_bi_lstm(text, text_length, flags, embedding_initializer=None,
 
             # Bottleneck layer
             if flags.embedding_size:
-                h = slim.fully_connected(h, num_outputs=flags.embedding_size,
-                                         activation_fn=activation_fn, normalizer_fn=None,
-                                         scope='text_feature_adaptor')
-
+                with _get_fc_scope(is_training, flags):
+                    h = slim.fully_connected(h, num_outputs=flags.embedding_size, scope='text_feature_adaptor')
     return h
 
 
@@ -497,9 +496,8 @@ def get_cnn_bi_lstm(text, text_length, flags, embedding_initializer=None,
 
             # Bottleneck layer
             if flags.embedding_size:
-                h = slim.fully_connected(h, num_outputs=flags.embedding_size,
-                                         activation_fn=activation_fn, normalizer_fn=None,
-                                         scope='text_feature_adaptor')
+                with _get_fc_scope(is_training, flags):
+                    h = slim.fully_connected(h, num_outputs=flags.embedding_size, scope='text_feature_adaptor')
 
     return h
 
@@ -555,9 +553,8 @@ def get_simple_bi_lstm(text, text_length, flags, embedding_initializer=None,
 
             # Bottleneck layer
             if flags.embedding_size:
-                h = slim.fully_connected(h, num_outputs=flags.embedding_size,
-                                         activation_fn=activation_fn, normalizer_fn=None,
-                                         scope='text_feature_adaptor')
+                with _get_fc_scope(is_training, flags):
+                    h = slim.fully_connected(h, num_outputs=flags.embedding_size, scope='text_feature_adaptor')
         
         
     return h
@@ -642,26 +639,26 @@ def get_inference_graph(images, text, text_length, flags, is_training, embedding
     :param reuse:
     :return:
     """
-    image_embeddings, text_embeddings = get_embeddings(images, text, text_length, flags=flags, is_training=is_training,
-                                                       embedding_initializer=embedding_initializer, reuse=reuse)
     with tf.variable_scope('Model', reuse=True):
+        image_embeddings, text_embeddings = get_embeddings(images, text, text_length,
+                                                           flags=flags, is_training=is_training,
+                                                           embedding_initializer=embedding_initializer, reuse=reuse)
+
         # Here we compute logits of correctly matching text to a given image.
         # We could also compute logits of correctly matching an image to a given text by reversing
         # image_embeddings and text_embeddings
-        logits = get_distance_head(embedding_mod1=image_embeddings,
-                                   embedding_mod2=text_embeddings, flags=flags,
-                                   is_training=is_training, scope='distance_head')
+        logits = get_distance_head(embedding_mod1=image_embeddings, embedding_mod2=text_embeddings,
+                                   flags=flags, is_training=is_training, scope='distance_head')
     return logits, image_embeddings, text_embeddings
 
 
 def get_embeddings(images, text, text_length, flags, is_training, embedding_initializer=None, reuse=False):
-    with tf.variable_scope('Model'):
-        image_embeddings = get_image_feature_extractor(images, flags, is_training=is_training,
-                                                       scope='image_feature_extractor', reuse=reuse)
-        text_embeddings = get_text_feature_extractor(text, text_length, flags,
-                                                     embedding_initializer=embedding_initializer,
-                                                     is_training=is_training, scope='text_feature_extractor',
-                                                     reuse=reuse)
+    image_embeddings = get_image_feature_extractor(images, flags, is_training=is_training,
+                                                   scope='image_feature_extractor', reuse=reuse)
+    text_embeddings = get_text_feature_extractor(text, text_length, flags,
+                                                 embedding_initializer=embedding_initializer,
+                                                 is_training=is_training, scope='text_feature_extractor',
+                                                 reuse=reuse)
     return image_embeddings, text_embeddings
 
 
