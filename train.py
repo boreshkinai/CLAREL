@@ -27,6 +27,7 @@ from common.util import Namespace
 from datasets import Dataset
 from datasets.dataset_list import get_dataset_splits
 from common.metrics import ap_at_k_prototypes
+from common.pretrained_models import IMAGE_MODEL_CHECKPOINTS
 
 
 tf.logging.set_verbosity(tf.logging.INFO)
@@ -90,11 +91,9 @@ def get_arguments():
     parser.add_argument('--embedding_size', type=int, default=1024)
     parser.add_argument('--embedding_pooled', type=bool, default=True)
     # Image feature extractor
-    parser.add_argument('--image_feature_extractor', type=str, default='inception_v3',
-                        choices=['simple_res_net', 'inception_v3'], help='Which feature extractor to use')
+    parser.add_argument('--image_feature_extractor', type=str, default='inception_v2',
+                        choices=['simple_res_net', 'inception_v3', 'inception_v2'], help='Which feature extractor to use')
     parser.add_argument('--image_fe_trainable', type=bool, default=False)
-    parser.add_argument('--image_fe_checkpoint_file', type=str,
-                        default='/mnt/datasets/public/research/cvpr2016_cub/inception_v3.ckpt')  # '/Users/boris/Downloads/inception_v3.ckpt'
     parser.add_argument('--num_filters', type=int, default=64)
     parser.add_argument('--num_units_in_block', type=int, default=3)
     parser.add_argument('--num_blocks', type=int, default=4)
@@ -689,7 +688,7 @@ def get_images_placeholder(batch_size: int, num_images: int, image_size: int, fl
         images_placeholder = tf.placeholder(tf.float32, shape=(batch_size, num_images, image_size, image_size, 3),
                                             name='images')
     else:
-        num_features_dict = {'simple_res_net': 512, 'inception_v3': 2048}
+        num_features_dict = {'simple_res_net': 512, 'inception_v3': 2048, 'inception_v2': 1024}
         images_placeholder = tf.placeholder(tf.float32, name='images',
                                             shape=(batch_size, num_images,
                                                    num_features_dict[flags.image_feature_extractor]))
@@ -895,12 +894,14 @@ def eval_acc(flags: Namespace, datasets: Dict[str, Dataset]):
 
 
 def get_image_fe_restorer(flags: Namespace):
+    def name_in_checkpoint(var: tf.Variable):
+        return '/'.join(var.op.name.split('/')[2:])
+        
     if flags.image_feature_extractor == 'inception_v3' and flags.image_fe_trainable:
         vars = tf.get_collection(key=tf.GraphKeys.MODEL_VARIABLES, scope='.*InceptionV3')
-
-        def name_in_checkpoint(var: tf.Variable):
-            return '/'.join(var.op.name.split('/')[2:])
-
+        return tf.train.Saver(var_list={name_in_checkpoint(var): var for var in vars})
+    elif flags.image_feature_extractor == 'inception_v2' and flags.image_fe_trainable:
+        vars = tf.get_collection(key=tf.GraphKeys.MODEL_VARIABLES, scope='.*InceptionV2')
         return tf.train.Saver(var_list={name_in_checkpoint(var): var for var in vars})
     else:
         return None
@@ -934,7 +935,7 @@ def train(flags):
 
     # Get datasets
     dataset_splits = get_dataset_splits(dataset_name=flags.dataset, data_dir=flags.data_dir,
-                                        splits=[flags.train_split, 'test', 'val'])
+                                        splits=[flags.train_split, 'test', 'val'], flags=flags)
     max_text_len = dataset_splits[flags.train_split].max_text_len
     with tf.Graph().as_default():
         global_step = tf.Variable(0, trainable=False, name='global_step', dtype=tf.int64)
@@ -1027,7 +1028,7 @@ def train(flags):
 
         with supervisor.managed_session() as sess:
             if image_fe_restorer:
-                image_fe_restorer.restore(sess, flags.image_fe_checkpoint_file)
+                image_fe_restorer.restore(sess, IMAGE_MODEL_CHECKPOINTS[flags.image_feature_extractor])
                 # test_pretrained_inception_model(images_pl, sess)
 
             checkpoint_step = sess.run(global_step)

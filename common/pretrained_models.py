@@ -95,3 +95,4 @@ class InceptionV2Loader(InceptionLoader):
 
 
 IMAGE_MODELS = {"inception_v3": InceptionV3Loader, "inception_v2": InceptionV2Loader}
+IMAGE_MODEL_CHECKPOINTS = {"inception_v3": INCEPTION_V3_PATH, "inception_v2": INCEPTION_V2_PATH}

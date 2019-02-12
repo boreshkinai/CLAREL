@@ -13,7 +13,7 @@ import gzip
 import time
 import gensim
 import gensim.downloader
-from common.pretrained_models import InceptionV3Loader
+from common.pretrained_models import IMAGE_MODELS
 
 
 class Cvpr2016CubLoader(Dataset):
@@ -23,7 +23,8 @@ class Cvpr2016CubLoader(Dataset):
 
     def __init__(self, data_dir: str = DEFAULT_DIR, cub_dir: str = DEFAULT_CUB_DIR, split: str = "train",
                  img_target_size: int = 299, img_border_size: int = 16, max_text_len: int = 30,
-                 vocab_size: int = 10000, word_embed_dir=DEFAULT_WORD2VEC_DIR, word_embed_file=FILE_NAME_WORD2VEC):
+                 vocab_size: int = 10000, word_embed_dir=DEFAULT_WORD2VEC_DIR, word_embed_file=FILE_NAME_WORD2VEC,
+                 image_model='inception_v2'):
         """
 
         :param data_dir: data in which the main dataset is stored
@@ -43,6 +44,7 @@ class Cvpr2016CubLoader(Dataset):
         self.vocab_size = vocab_size
         self.word_embed_dir = word_embed_dir
         self.word_embed_file = word_embed_file
+        self.image_model = image_model
 
     def load(self):
         print()
@@ -71,7 +73,7 @@ class Cvpr2016CubLoader(Dataset):
             pickle.dump(self, f)
 
     def _extract_image_features(self):
-        image_model = InceptionV3Loader()
+        image_model = IMAGE_MODELS[self.image_model]()
         print("Preprocessing images with a pretrained model...")
         image_embeddings = []
         for images, _, _ in tqdm(self.sequential_evaluation_batches(batch_size=10, num_images=10, num_texts=1)):
