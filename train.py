@@ -55,8 +55,8 @@ def get_arguments():
     # Batch parameters
     parser.add_argument('--train_batch_size', type=int, default=32, help='Training batch size.')
     parser.add_argument('--num_images', type=int, default=1, help='Number of image samples per image/text pair.')
-    parser.add_argument('--num_texts', type=int, default=5, help='Number of text samples per image/text pair.')
-    parser.add_argument('--init_learning_rate', type=float, default=0.105, help='Initial learning rate.')
+    parser.add_argument('--num_texts', type=int, default=10, help='Number of text samples per image/text pair.')
+    parser.add_argument('--init_learning_rate', type=float, default=0.1, help='Initial learning rate.')
     parser.add_argument('--save_summaries_secs', type=int, default=60, help='Time between saving summaries')
     parser.add_argument('--save_interval_secs', type=int, default=60, help='Time between saving model?')
     parser.add_argument('--optimizer', type=str, default='sgd', choices=['sgd', 'adam'])
@@ -86,7 +86,7 @@ def get_arguments():
                         help='Path to the pretrained model to run the nearest neigbor baseline test.')
     # Architecture parameters
     parser.add_argument('--dropout', type=float, default=0.25)
-    parser.add_argument('--weight_decay', type=float, default=0.0005)
+    parser.add_argument('--weight_decay', type=float, default=0.001)
     parser.add_argument('--embedding_size', type=int, default=1024)
     parser.add_argument('--embedding_pooled', type=bool, default=True)
     # Image feature extractor
@@ -112,9 +112,9 @@ def get_arguments():
     parser.add_argument('--text_maxlen', type=int, default=100, help='Maximal length of the text description in tokens')
     parser.add_argument('--shuffle_text_in_batch', type=bool, default=False)
     parser.add_argument('--rnn_size', type=int, default=512)
-    parser.add_argument('--num_text_cnn_filt', type=int, default=128)
+    parser.add_argument('--num_text_cnn_filt', type=int, default=256)
     parser.add_argument('--num_text_cnn_units', type=int, default=3)
-    parser.add_argument('--num_text_cnn_blocks', type=int, default=1)
+    parser.add_argument('--num_text_cnn_blocks', type=int, default=2)
 
     
 
