@@ -121,9 +121,12 @@ def get_arguments():
     parser.add_argument('--metric_multiplier_trainable', type=bool, default=False,
                         help='multiplier of cosine metric trainability')
     parser.add_argument('--polynomial_metric_order', type=int, default=1)
-    # Global consistency term
-    parser.add_argument('--global_consistency_weight', type=float, default=None,
-                        help='The weight of the global consistency term between text and image')
+    # MI term
+    parser.add_argument('--mi_weight', type=float, default=1.0,
+                        help='The weight of the mutual information term between text and image distances')
+    parser.add_argument('--mi_kernel_width', type=float, default=0.1,
+                        help='The weight of the mutual information term between text and image distances')
+
 
     args = parser.parse_args()
 
@@ -940,8 +943,7 @@ def train(flags):
     with tf.Graph().as_default():
         global_step = tf.Variable(0, trainable=False, name='global_step', dtype=tf.int64)
         is_training = tf.Variable(True, trainable=False, name='is_training', dtype=tf.bool)
-        global_consistency_weight = tf.Variable(0.0, trainable=False, name='global_consistency_weight',
-                                                dtype=tf.float32)
+        mi_weight = tf.Variable(0.0, trainable=False, name='mi_weight', dtype=tf.float32)
         images_pl, text_pl, text_len_pl, match_labels_txt2img_pl, match_labels_img2txt_pl = \
             get_input_placeholders(batch_size=flags.train_batch_size,
                                    num_images=flags.num_images, num_texts=flags.num_texts,
@@ -964,45 +966,34 @@ def train(flags):
                                                     labels=tf.one_hot(match_labels_img2txt_pl, flags.train_batch_size)),
             name='loss_img2txt')
 
-        if flags.global_consistency_weight:
-            # TODO: This part doesn't work if shuffle_text_in_batch is TRUE
-            image_embeddings_1, image_embeddings_2 = tf.split(image_embeddings, num_or_size_splits=2, axis=0)
-            text_embeddings_1, text_embeddings_2 = tf.split(text_embeddings, num_or_size_splits=2, axis=0)
-
-            image_distances = get_distance_head(embedding_mod1=image_embeddings_1, embedding_mod2=image_embeddings_2,
+        if flags.mi_weight:
+            image_distances = get_distance_head(embedding_mod1=image_embeddings, embedding_mod2=image_embeddings,
                                                 flags=None, is_training=None, scope='image_distances')
-            text_distances = get_distance_head(embedding_mod1=text_embeddings_1, embedding_mod2=text_embeddings_2,
+            text_distances = get_distance_head(embedding_mod1=text_embeddings, embedding_mod2=text_embeddings,
                                                flags=None, is_training=None, scope='text_distances')
+            # Distance matrices are symmetric within modality, take only the lower triangular part and ignore diagonal
+            lower_tril_idxs = np.column_stack(np.tril_indices(n=flags.train_batch_size, k=-1))
+            x = tf.expand_dims(tf.gather_nd(image_distances, lower_tril_idxs), axis=-1) / (np.sqrt(2.0)*flags.mi_kernel_width)
+            y = tf.expand_dims(tf.gather_nd(text_distances, lower_tril_idxs), axis=-1) / (np.sqrt(2.0)*flags.mi_kernel_width)
+            z = tf.concat([x, y], axis=1)
 
-            consistency_loss_img2txt = tf.reduce_mean(
-                tf.nn.softmax_cross_entropy_with_logits(logits=image_distances,
-                                                        labels=tf.nn.softmax(text_distances),
-                                                        name='consistency_loss_img2txt'))
-            consistency_loss_txt2img = tf.reduce_mean(
-                tf.nn.softmax_cross_entropy_with_logits(logits=text_distances,
-                                                        labels=tf.nn.softmax(image_distances),
-                                                        name='consistency_loss_txt2img'))
+            hx_kernel = -tf.square(get_distance_head(x, x, flags, is_training, scope='hx_kernel'))
+            hy_kernel = -tf.square(get_distance_head(y, y, flags, is_training, scope='hy_kernel'))
+            hz_kernel = -tf.square(get_distance_head(z, z, flags, is_training, scope='hz_kernel'))
 
-            uniform = tf.fill([flags.train_batch_size // 2, flags.train_batch_size // 2],
-                              1.0 / float(flags.train_batch_size),
-                              name='uniform_distribution')
-            uniform_penalty_images = -tf.reduce_mean(
-                tf.nn.softmax_cross_entropy_with_logits(logits=image_distances, labels=uniform,
-                                                        name='uniform_penalty_images'))
-            uniform_penalty_text = -tf.reduce_mean(
-                tf.nn.softmax_cross_entropy_with_logits(logits=text_distances, labels=uniform,
-                                                        name='uniform_penalty_text'))
+            hx_negative = tf.reduce_mean(tf.reduce_logsumexp(hx_kernel, axis=-1), keep_dims=False, name="hx_negative")
+            hy_negative = tf.reduce_mean(tf.reduce_logsumexp(hy_kernel, axis=-1), keep_dims=False, name="hy_negative")
+            hz_negative = tf.reduce_mean(tf.reduce_logsumexp(hz_kernel, axis=-1), keep_dims=False, name="hz_negative")
 
-            consistency_loss = 0.5 * consistency_loss_img2txt + 0.5 * consistency_loss_txt2img
-            consistency_loss += 0.5 * uniform_penalty_images + 0.5 * uniform_penalty_text
+            mi_loss = -hz_negative + hx_negative + hy_negative
 
-            tf.summary.scalar('loss/consistency', consistency_loss)
-            consistency_loss_weighted = global_consistency_weight * consistency_loss
+            tf.summary.scalar('loss/mutual_information', mi_loss)
+            mi_loss_weighted = mi_weight * mi_loss
         else:
-            consistency_loss_weighted = 0.0
+            mi_loss_weighted = 0.0
 
         regu_losses = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
-        loss_tot = tf.add_n([0.5 * loss_txt2img + 0.5 * loss_img2txt + consistency_loss_weighted] + regu_losses)
+        loss_tot = tf.add_n([0.5 * loss_txt2img + 0.5 * loss_img2txt + mi_loss_weighted] + regu_losses)
         misclass_txt2img = 1.0 - slim.metrics.accuracy(tf.argmax(logits, 1), match_labels_txt2img_pl)
         misclass_img2txt = 1.0 - slim.metrics.accuracy(tf.argmax(logits, 0), match_labels_img2txt_pl)
         main_train_op = get_main_train_op(loss_tot, global_step, flags)
@@ -1054,8 +1045,8 @@ def train(flags):
                              match_labels_txt2img_pl: labels_txt2img, match_labels_img2txt_pl: labels_img2txt,
                              is_training: np.random.uniform() < flags.train_bn_proba}
 
-                if flags.global_consistency_weight:
-                    feed_dict.update({global_consistency_weight: flags.global_consistency_weight})
+                if flags.mi_weight:
+                    feed_dict.update({mi_weight: flags.mi_weight})
 
                 if step % 100 == 0:
                     summary_str = sess.run(summary, feed_dict=feed_dict)
