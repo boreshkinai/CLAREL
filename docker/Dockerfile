@@ -1,4 +1,4 @@
-FROM tensorflow/tensorflow:1.8.0-devel-gpu-py3
+FROM tensorflow/tensorflow:1.12.0-devel-gpu-py3
 
 MAINTAINER Boris Oreshkin <boris@elementai.com>
 

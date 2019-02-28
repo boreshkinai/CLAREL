@@ -36,7 +36,7 @@ ENV LANG C.UTF-8
 
 RUN conda install -y numpy pymongo scipy pandas jupyter matplotlib h5py
 
-RUN pip install celery tensorflow-gpu==1.8.0 tensorboard==1.8.0 statsmodels gitpython
+RUN pip install celery tensorflow-gpu==1.12.0 tensorboard==1.8.0 statsmodels gitpython
 
 RUN pip install tqdm googledrivedownloader requests pillow torch==0.4.1 keras==2.2.4 gensim==3.7.1
 
