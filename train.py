@@ -28,6 +28,7 @@ from datasets import Dataset
 from datasets.dataset_list import get_dataset_splits
 from common.metrics import ap_at_k_prototypes
 from common.pretrained_models import IMAGE_MODEL_CHECKPOINTS
+from common.losses import get_rmse_loss, get_mi_loss
 
 
 tf.logging.set_verbosity(tf.logging.INFO)
@@ -57,7 +58,7 @@ def get_arguments():
     parser.add_argument('--train_batch_size', type=int, default=32, help='Training batch size.')
     parser.add_argument('--num_images', type=int, default=1, help='Number of image samples per image/text pair.')
     parser.add_argument('--num_texts', type=int, default=10, help='Number of text samples per image/text pair.')
-    parser.add_argument('--init_learning_rate', type=float, default=0.1, help='Initial learning rate.')
+    parser.add_argument('--init_learning_rate', type=float, default=0.1005, help='Initial learning rate.')
     parser.add_argument('--save_summaries_secs', type=int, default=60, help='Time between saving summaries')
     parser.add_argument('--save_interval_secs', type=int, default=60, help='Time between saving model?')
     parser.add_argument('--optimizer', type=str, default='sgd', choices=['sgd', 'adam'])
@@ -122,10 +123,12 @@ def get_arguments():
                         help='multiplier of cosine metric trainability')
     parser.add_argument('--polynomial_metric_order', type=int, default=1)
     # MI term
-    parser.add_argument('--mi_weight', type=float, default=1.0,
+    parser.add_argument('--mi_weight', type=float, default=5.0,
                         help='The weight of the mutual information term between text and image distances')
-    parser.add_argument('--mi_kernel_width', type=float, default=0.1,
-                        help='The weight of the mutual information term between text and image distances')
+    parser.add_argument('--mi_kernel_width', type=float, default=1.0,
+                        help='The width of KDE kernel used to estmiate MI')
+    parser.add_argument('--mi_train_offset', type=float, default=0.0,
+                        help='The proportion of steps to delay the inclusion of MI loss into total loss')
 
 
     args = parser.parse_args()
@@ -171,6 +174,37 @@ def get_logdir_name(flags):
 
     return logdir
 
+
+def batch_norm_nonan(inputs, is_training, decay=0.95, epsilon=1e-6, center=True, scale=True,
+                     scope="batch_norm", reuse=tf.AUTO_REUSE, trainable=True, 
+                     updates_collections=tf.GraphKeys.UPDATE_OPS,
+                     param_regularizers={'beta': tf.contrib.layers.l2_regularizer(scale=0.0),
+                                         'gamma': tf.contrib.layers.l2_regularizer(scale=0.0)}):
+    
+    with tf.variable_scope(scope, reuse=reuse):
+        is_training_tf = tf.Variable(is_training, trainable=False, name='is_training', dtype=tf.bool)
+        
+        scale = tf.get_variable(name='gamma', dtype=tf.float32, trainable=scale,
+                                initializer=tf.ones([inputs.get_shape()[-1]]), regularizer=param_regularizers["gamma"])
+        beta = tf.get_variable(name='beta', dtype=tf.float32, trainable=center,
+                                initializer=tf.zeros([inputs.get_shape()[-1]]), regularizer=param_regularizers["beta"])
+        pop_mean = tf.Variable(tf.zeros([inputs.get_shape()[-1]]), trainable=False, name='moving_mean')
+        pop_var = tf.Variable(tf.ones([inputs.get_shape()[-1]]), trainable=False, name='moving_var')
+        
+        def train_pass():
+            batch_mean, batch_var = tf.nn.moments(inputs, axes=[0, 1, 2])
+            train_mean = tf.assign(pop_mean,
+                                   pop_mean * decay + batch_mean * (1 - decay))
+            train_var = tf.assign(pop_var,
+                                  pop_var * decay + batch_var * (1 - decay))
+            with tf.control_dependencies([train_mean, train_var]):
+                return tf.nn.batch_normalization(inputs, batch_mean, batch_var, beta, scale, epsilon)
+            
+        def inference_pass():
+            return tf.nn.batch_normalization(inputs, pop_mean, pop_var, beta, scale, epsilon)
+            
+        return tf.cond(is_training_tf, train_pass, inference_pass)
+    
 
 class ScaledVarianceRandomNormal(init_ops.Initializer):
     """Initializer that generates tensors with a normal distribution scaled as per https://arxiv.org/pdf/1502.01852.pdf.
@@ -218,14 +252,7 @@ def _get_fc_scope(is_training, flags):
     return scope
 
 
-def _get_scope(is_training, flags):
-    """
-    Get slim scope parameters for the convolutional and dropout layers
-
-    :param is_training: whether the network is in training mode
-    :param flags: overall settings of the model
-    :return: convolutional and dropout scopes
-    """
+def _get_normalizer_params(is_training, flags):
     normalizer_params = {
         'epsilon': 1e-6,
         'decay': .95,
@@ -237,6 +264,18 @@ def _get_scope(is_training, flags):
         'param_regularizers': {'beta': tf.contrib.layers.l2_regularizer(scale=flags.weight_decay),
                                'gamma': tf.contrib.layers.l2_regularizer(scale=flags.weight_decay)},
     }
+    return normalizer_params
+
+
+def _get_scope(is_training, flags):
+    """
+    Get slim scope parameters for the convolutional and dropout layers
+
+    :param is_training: whether the network is in training mode
+    :param flags: overall settings of the model
+    :return: convolutional and dropout scopes
+    """
+    normalizer_params = _get_normalizer_params(is_training, flags)
     conv2d_arg_scope = slim.arg_scope(
         [slim.conv2d],
         activation_fn=ACTIVATION_MAP[flags.activation],
@@ -459,13 +498,18 @@ def get_cnn_bi_lstm(text, text_length, flags, embedding_initializer=None,
         h = tf.expand_dims(h, 1)
         print(h.get_shape().as_list())
         conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
+        normalizer_params = _get_normalizer_params(is_training, flags)
         with conv2d_arg_scope, dropout_arg_scope:
             for i in range(flags.num_text_cnn_blocks):
                 shortcut = slim.conv2d(h, num_outputs=math.pow(2, i)*flags.num_text_cnn_filt, kernel_size=1, stride=1,
-                                       activation_fn=None, scope='shortcut' + str(i), padding='SAME')
+                                       activation_fn=None, normalizer_fn=None, scope='shortcut' + str(i), padding='SAME')
+                print(shortcut)
+                shortcut = batch_norm_nonan(shortcut, scope="bn_shortcut"+str(i), **normalizer_params)
                 for j in range(flags.num_text_cnn_units):
                     h = slim.conv2d(h, num_outputs=math.pow(2, i)*flags.num_text_cnn_filt, kernel_size=[1, 3], stride=1,
-                                    scope='text_conv' + str(i) + "_" + str(j), padding='SAME', activation_fn=None)
+                                    scope='text_conv' + str(i) + "_" + str(j), padding='SAME', activation_fn=None, 
+                                    normalizer_fn=None)
+                    h = batch_norm_nonan(h, scope="bn_text_conv" + str(i) + "_" + str(j), **normalizer_params)
                     if j < (flags.num_text_cnn_units - 1):
                         h = activation_fn(h, name='activation_' + str(i) + '_' + str(j))
                 h = h + shortcut
@@ -940,6 +984,7 @@ def train(flags):
     dataset_splits = get_dataset_splits(dataset_name=flags.dataset, data_dir=flags.data_dir,
                                         splits=[flags.train_split, 'test', 'val'], flags=flags)
     max_text_len = dataset_splits[flags.train_split].max_text_len
+    max_text_len=30
     with tf.Graph().as_default():
         global_step = tf.Variable(0, trainable=False, name='global_step', dtype=tf.int64)
         is_training = tf.Variable(True, trainable=False, name='is_training', dtype=tf.bool)
@@ -967,33 +1012,35 @@ def train(flags):
             name='loss_img2txt')
 
         if flags.mi_weight:
-            image_distances = get_distance_head(embedding_mod1=image_embeddings, embedding_mod2=image_embeddings,
-                                                flags=None, is_training=None, scope='image_distances')
-            text_distances = get_distance_head(embedding_mod1=text_embeddings, embedding_mod2=text_embeddings,
-                                               flags=None, is_training=None, scope='text_distances')
-            # Distance matrices are symmetric within modality, take only the lower triangular part and ignore diagonal
-            lower_tril_idxs = np.column_stack(np.tril_indices(n=flags.train_batch_size, k=-1))
-            x = tf.expand_dims(tf.gather_nd(image_distances, lower_tril_idxs), axis=-1) / (np.sqrt(2.0)*flags.mi_kernel_width)
-            y = tf.expand_dims(tf.gather_nd(text_distances, lower_tril_idxs), axis=-1) / (np.sqrt(2.0)*flags.mi_kernel_width)
-            z = tf.concat([x, y], axis=1)
-
-            hx_kernel = -tf.square(get_distance_head(x, x, flags, is_training, scope='hx_kernel'))
-            hy_kernel = -tf.square(get_distance_head(y, y, flags, is_training, scope='hy_kernel'))
-            hz_kernel = -tf.square(get_distance_head(z, z, flags, is_training, scope='hz_kernel'))
-
-            hx_negative = tf.reduce_mean(tf.reduce_logsumexp(hx_kernel, axis=-1), keep_dims=False, name="hx_negative")
-            hy_negative = tf.reduce_mean(tf.reduce_logsumexp(hy_kernel, axis=-1), keep_dims=False, name="hy_negative")
-            hz_negative = tf.reduce_mean(tf.reduce_logsumexp(hz_kernel, axis=-1), keep_dims=False, name="hz_negative")
-
-            mi_loss = -hz_negative + hx_negative + hy_negative
-
-            tf.summary.scalar('loss/mutual_information', mi_loss)
+            image_embeddings_cond = tf.cond(mi_weight > 0.0, lambda: image_embeddings, 
+                                            lambda: tf.stop_gradient(image_embeddings))
+            text_embeddings_cond = tf.cond(mi_weight > 0.0, lambda: text_embeddings, 
+                                           lambda: tf.stop_gradient(text_embeddings))
+            
+            def get_dist_mtx(x):
+                diff = (tf.expand_dims(x, -1)-tf.transpose(x))
+                print(diff)
+                diff = -tf.square(diff)
+                diff = tf.reduce_mean(diff, axis=len(x.shape)-1)
+                print(diff)
+                return diff
+            image_distances = get_dist_mtx(image_embeddings_cond)
+            text_distances = get_dist_mtx(text_embeddings_cond)
+            
+#             image_distances = get_distance_head(embedding_mod1=image_embeddings_cond, embedding_mod2=image_embeddings_cond,
+#                                                 flags=None, is_training=None, scope='image_distances')
+#             text_distances = get_distance_head(embedding_mod1=text_embeddings_cond, embedding_mod2=text_embeddings_cond,
+#                                                flags=None, is_training=None, scope='text_distances')
+            
+            mi_loss = get_rmse_loss(text_distances, image_distances, flags)
+            mi_loss = tf.where(tf.is_nan(mi_loss), tf.zeros_like(mi_loss), mi_loss)
+            tf.summary.scalar('loss/consistence_loss', mi_loss)
             mi_loss_weighted = mi_weight * mi_loss
         else:
             mi_loss_weighted = 0.0
 
         regu_losses = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
-        loss_tot = tf.add_n([0.5 * loss_txt2img + 0.5 * loss_img2txt + mi_loss_weighted] + regu_losses)
+        loss_tot = tf.add_n([0.5 * loss_txt2img, 0.5 * loss_img2txt, mi_loss_weighted] + regu_losses)
         misclass_txt2img = 1.0 - slim.metrics.accuracy(tf.argmax(logits, 1), match_labels_txt2img_pl)
         misclass_img2txt = 1.0 - slim.metrics.accuracy(tf.argmax(logits, 0), match_labels_img2txt_pl)
         main_train_op = get_main_train_op(loss_tot, global_step, flags)
@@ -1028,47 +1075,49 @@ def train(flags):
 
             loss_tot, dt_train = 0.0, 0.0
             for step in range(checkpoint_step, flags.number_of_steps):
-                # get batch of data to compute classification loss
-                dt_batch = time.time()
-                if flags.image_fe_trainable:
-                    images, text, text_length, match_labels = dataset_splits[flags.train_split].next_batch(
-                        batch_size=flags.train_batch_size, num_images=flags.num_images, num_texts=flags.num_texts)
-                else:
-                    images, text, text_length, match_labels = dataset_splits[flags.train_split].next_batch_features(
-                        batch_size=flags.train_batch_size, num_images=flags.num_images, num_texts=flags.num_texts)
+                with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+                    dt_batch = time.time()
+                    if flags.image_fe_trainable:
+                        images, text, text_length, match_labels = dataset_splits[flags.train_split].next_batch(
+                            batch_size=flags.train_batch_size, num_images=flags.num_images, num_texts=flags.num_texts)
+                    else:
+                        images, text, text_length, match_labels = dataset_splits[flags.train_split].next_batch_features(
+                            batch_size=flags.train_batch_size, num_images=flags.num_images, num_texts=flags.num_texts)
 
-                labels_txt2img, labels_img2txt = match_labels
-                dt_batch = time.time() - dt_batch
+                    labels_txt2img, labels_img2txt = match_labels
+                    dt_batch = time.time() - dt_batch
 
-                feed_dict = {images_pl: images.astype(dtype=np.float32), text_len_pl: text_length,
-                             text_pl: text,
-                             match_labels_txt2img_pl: labels_txt2img, match_labels_img2txt_pl: labels_img2txt,
-                             is_training: np.random.uniform() < flags.train_bn_proba}
+                    feed_dict = {images_pl: images.astype(dtype=np.float32), text_len_pl: text_length,
+                                 text_pl: text,
+                                 match_labels_txt2img_pl: labels_txt2img, match_labels_img2txt_pl: labels_img2txt,
+                                 is_training: np.random.uniform() < flags.train_bn_proba}
 
-                if flags.mi_weight:
-                    feed_dict.update({mi_weight: flags.mi_weight})
+                    if flags.mi_weight and step > flags.mi_train_offset*flags.number_of_steps:
+                        feed_dict.update({mi_weight: flags.mi_weight})
+                    else:
+                        feed_dict.update({mi_weight: -1e-5})
 
-                if step % 100 == 0:
-                    summary_str = sess.run(summary, feed_dict=feed_dict)
-                    summary_writer.add_summary(summary_str, step)
-                    summary_writer.flush()
-                    logging.info(
-                        "step %d, loss : %.4g, dt: %.3gs, dt_batch: %.3gs" % (step, loss_tot, dt_train, dt_batch))
+                    if step % 100 == 0:
+                        summary_str = sess.run(summary, feed_dict=feed_dict)
+                        summary_writer.add_summary(summary_str, step)
+                        summary_writer.flush()
+                        logging.info(
+                            "step %d, loss : %.4g, dt: %.3gs, dt_batch: %.3gs" % (step, loss_tot, dt_train, dt_batch))
 
-                if step % 100 == 0:
-                    logits_img2txt = sess.run(logits, feed_dict=feed_dict)
-                    logits_img2txt = np.argmax(logits_img2txt, axis=0)
-                    num_matches = float(sum(labels_img2txt == logits_img2txt))
-                    logging.info("img2txt acc: %.3g" % (num_matches / flags.train_batch_size))
+                    if step % 100 == 0:
+                        logits_img2txt = sess.run(logits, feed_dict=feed_dict)
+                        logits_img2txt = np.argmax(logits_img2txt, axis=0)
+                        num_matches = float(sum(labels_img2txt == logits_img2txt))
+                        logging.info("img2txt acc: %.3g" % (num_matches / flags.train_batch_size))
 
-                t_train = time.time()
-                loss_tot = sess.run(main_train_op, feed_dict=feed_dict)
-                dt_train = time.time() - t_train
+                    t_train = time.time()
+                    loss_tot = sess.run(main_train_op, feed_dict=feed_dict)
+                    dt_train = time.time() - t_train
 
-                if step % flags.eval_interval_steps == 0:
-                    saver.save(sess, os.path.join(log_dir, 'model'), global_step=step)
-                    eval_acc_batch(flags, datasets=dataset_splits)
-                    eval_acc(flags, datasets=dataset_splits)
+                    if step % flags.eval_interval_steps == 0:
+                        saver.save(sess, os.path.join(log_dir, 'model'), global_step=step)
+                        eval_acc_batch(flags, datasets=dataset_splits)
+                        eval_acc(flags, datasets=dataset_splits)
 
 
 def test():
