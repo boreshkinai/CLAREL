@@ -28,7 +28,7 @@ from datasets import Dataset
 from datasets.dataset_list import get_dataset_splits
 from common.metrics import ap_at_k_prototypes
 from common.pretrained_models import IMAGE_MODEL_CHECKPOINTS
-from common.losses import get_rmse_loss, get_mi_loss
+from common.losses import get_rmse_loss, get_mi_loss, get_dist_mtx
 
 
 tf.logging.set_verbosity(tf.logging.INFO)
@@ -1012,27 +1012,17 @@ def train(flags):
             name='loss_img2txt')
 
         if flags.mi_weight:
+            # TODO: this can be removed
             image_embeddings_cond = tf.cond(mi_weight > 0.0, lambda: image_embeddings, 
                                             lambda: tf.stop_gradient(image_embeddings))
             text_embeddings_cond = tf.cond(mi_weight > 0.0, lambda: text_embeddings, 
                                            lambda: tf.stop_gradient(text_embeddings))
             
-            def get_dist_mtx(x):
-                diff = (tf.expand_dims(x, -1)-tf.transpose(x))
-                print(diff)
-                diff = -tf.square(diff)
-                diff = tf.reduce_mean(diff, axis=len(x.shape)-1)
-                print(diff)
-                return diff
             image_distances = get_dist_mtx(image_embeddings_cond)
             text_distances = get_dist_mtx(text_embeddings_cond)
             
-#             image_distances = get_distance_head(embedding_mod1=image_embeddings_cond, embedding_mod2=image_embeddings_cond,
-#                                                 flags=None, is_training=None, scope='image_distances')
-#             text_distances = get_distance_head(embedding_mod1=text_embeddings_cond, embedding_mod2=text_embeddings_cond,
-#                                                flags=None, is_training=None, scope='text_distances')
-            
             mi_loss = get_rmse_loss(text_distances, image_distances, flags)
+            # TODO: this can be removed
             mi_loss = tf.where(tf.is_nan(mi_loss), tf.zeros_like(mi_loss), mi_loss)
             tf.summary.scalar('loss/consistence_loss', mi_loss)
             mi_loss_weighted = mi_weight * mi_loss

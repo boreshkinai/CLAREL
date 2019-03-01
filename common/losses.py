@@ -32,6 +32,13 @@ def get_mi_loss(modality1_dist, modality2_dist, flags):
     return -tf.div_no_nan(mi, perplexity)
 
 
+def get_dist_mtx(x):
+                diff = (tf.expand_dims(x, -1)-tf.transpose(x))
+                diff = -tf.square(diff)
+                diff = tf.reduce_mean(diff, axis=len(x.shape)-1)
+                return diff
+
+
 def get_rmse_loss(modality1_dist, modality2_dist, flags):
     lower_tril_idxs = np.column_stack(np.tril_indices(n=flags.train_batch_size, k=-1))
     x = tf.expand_dims(tf.gather_nd(modality1_dist, lower_tril_idxs), axis=-1) 
