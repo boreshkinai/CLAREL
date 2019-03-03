@@ -173,37 +173,6 @@ def get_logdir_name(flags):
         logdir = flags.exp_dir
 
     return logdir
-
-
-def batch_norm_nonan(inputs, is_training, decay=0.95, epsilon=1e-6, center=True, scale=True,
-                     scope="batch_norm", reuse=tf.AUTO_REUSE, trainable=True, 
-                     updates_collections=tf.GraphKeys.UPDATE_OPS,
-                     param_regularizers={'beta': tf.contrib.layers.l2_regularizer(scale=0.0),
-                                         'gamma': tf.contrib.layers.l2_regularizer(scale=0.0)}):
-    
-    with tf.variable_scope(scope, reuse=reuse):
-        is_training_tf = tf.Variable(is_training, trainable=False, name='is_training', dtype=tf.bool)
-        
-        scale = tf.get_variable(name='gamma', dtype=tf.float32, trainable=scale,
-                                initializer=tf.ones([inputs.get_shape()[-1]]), regularizer=param_regularizers["gamma"])
-        beta = tf.get_variable(name='beta', dtype=tf.float32, trainable=center,
-                                initializer=tf.zeros([inputs.get_shape()[-1]]), regularizer=param_regularizers["beta"])
-        pop_mean = tf.Variable(tf.zeros([inputs.get_shape()[-1]]), trainable=False, name='moving_mean')
-        pop_var = tf.Variable(tf.ones([inputs.get_shape()[-1]]), trainable=False, name='moving_var')
-        
-        def train_pass():
-            batch_mean, batch_var = tf.nn.moments(inputs, axes=[0, 1, 2])
-            train_mean = tf.assign(pop_mean,
-                                   pop_mean * decay + batch_mean * (1 - decay))
-            train_var = tf.assign(pop_var,
-                                  pop_var * decay + batch_var * (1 - decay))
-            with tf.control_dependencies([train_mean, train_var]):
-                return tf.nn.batch_normalization(inputs, batch_mean, batch_var, beta, scale, epsilon)
-            
-        def inference_pass():
-            return tf.nn.batch_normalization(inputs, pop_mean, pop_var, beta, scale, epsilon)
-            
-        return tf.cond(is_training_tf, train_pass, inference_pass)
     
 
 class ScaledVarianceRandomNormal(init_ops.Initializer):
@@ -502,14 +471,10 @@ def get_cnn_bi_lstm(text, text_length, flags, embedding_initializer=None,
         with conv2d_arg_scope, dropout_arg_scope:
             for i in range(flags.num_text_cnn_blocks):
                 shortcut = slim.conv2d(h, num_outputs=math.pow(2, i)*flags.num_text_cnn_filt, kernel_size=1, stride=1,
-                                       activation_fn=None, normalizer_fn=None, scope='shortcut' + str(i), padding='SAME')
-                print(shortcut)
-                shortcut = batch_norm_nonan(shortcut, scope="bn_shortcut"+str(i), **normalizer_params)
+                                       activation_fn=None, scope='shortcut' + str(i), padding='SAME')
                 for j in range(flags.num_text_cnn_units):
                     h = slim.conv2d(h, num_outputs=math.pow(2, i)*flags.num_text_cnn_filt, kernel_size=[1, 3], stride=1,
-                                    scope='text_conv' + str(i) + "_" + str(j), padding='SAME', activation_fn=None, 
-                                    normalizer_fn=None)
-                    h = batch_norm_nonan(h, scope="bn_text_conv" + str(i) + "_" + str(j), **normalizer_params)
+                                    scope='text_conv' + str(i) + "_" + str(j), padding='SAME', activation_fn=None)
                     if j < (flags.num_text_cnn_units - 1):
                         h = activation_fn(h, name='activation_' + str(i) + '_' + str(j))
                 h = h + shortcut
@@ -984,7 +949,6 @@ def train(flags):
     dataset_splits = get_dataset_splits(dataset_name=flags.dataset, data_dir=flags.data_dir,
                                         splits=[flags.train_split, 'test', 'val'], flags=flags)
     max_text_len = dataset_splits[flags.train_split].max_text_len
-    max_text_len=30
     with tf.Graph().as_default():
         global_step = tf.Variable(0, trainable=False, name='global_step', dtype=tf.int64)
         is_training = tf.Variable(True, trainable=False, name='is_training', dtype=tf.bool)
