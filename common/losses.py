@@ -33,20 +33,16 @@ def get_mi_loss(modality1_dist, modality2_dist, flags):
 
 
 def get_dist_mtx(x):
-                diff = (tf.expand_dims(x, -1)-tf.transpose(x))
-                diff = -tf.square(diff)
-                diff = tf.reduce_mean(diff, axis=len(x.shape)-1)
-                return diff
+    diff = (tf.expand_dims(x, -1)-tf.transpose(x))
+    diff = -tf.square(diff)
+    diff = tf.reduce_mean(diff, axis=len(x.shape)-1)
+    return diff
 
 
 def get_rmse_loss(modality1_dist, modality2_dist, flags):
     lower_tril_idxs = np.column_stack(np.tril_indices(n=flags.train_batch_size, k=-1))
     x = tf.expand_dims(tf.gather_nd(modality1_dist, lower_tril_idxs), axis=-1) 
     y = tf.expand_dims(tf.gather_nd(modality2_dist, lower_tril_idxs), axis=-1)
-#     x_max = tf.reduce_max(tf.stop_gradient(x))
-#     y_max = tf.reduce_max(tf.stop_gradient(y))
-#     loss = tf.norm(tf.exp(x-x_max)-tf.exp(y-y_max)) / len(lower_tril_idxs)
-#     x = tf.stop_gradient(x)
     y_const = tf.stop_gradient(y)
     x_const = tf.stop_gradient(x)
     loss1 = tf.div_no_nan( tf.square(tf.norm(x - y_const)), tf.norm(x) * tf.norm(y_const) )
