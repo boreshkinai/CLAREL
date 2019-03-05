@@ -28,7 +28,7 @@ from datasets import Dataset
 from datasets.dataset_list import get_dataset_splits
 from common.metrics import ap_at_k_prototypes
 from common.pretrained_models import IMAGE_MODEL_CHECKPOINTS
-from common.losses import get_rmse_loss, get_mi_loss, get_dist_mtx
+from common.losses import get_rmse_loss, get_mi_loss, get_dist_mtx, get_cross_classifier_loss
 
 
 tf.logging.set_verbosity(tf.logging.INFO)
@@ -58,7 +58,7 @@ def get_arguments():
     parser.add_argument('--train_batch_size', type=int, default=32, help='Training batch size.')
     parser.add_argument('--num_images', type=int, default=1, help='Number of image samples per image/text pair.')
     parser.add_argument('--num_texts', type=int, default=10, help='Number of text samples per image/text pair.')
-    parser.add_argument('--init_learning_rate', type=float, default=0.1005, help='Initial learning rate.')
+    parser.add_argument('--init_learning_rate', type=float, default=0.1006, help='Initial learning rate.')
     parser.add_argument('--save_summaries_secs', type=int, default=60, help='Time between saving summaries')
     parser.add_argument('--save_interval_secs', type=int, default=60, help='Time between saving model?')
     parser.add_argument('--optimizer', type=str, default='sgd', choices=['sgd', 'adam'])
@@ -115,6 +115,7 @@ def get_arguments():
     parser.add_argument('--num_text_cnn_filt', type=int, default=256)
     parser.add_argument('--num_text_cnn_units', type=int, default=3)
     parser.add_argument('--num_text_cnn_blocks', type=int, default=2)
+    
 
     
 
@@ -122,13 +123,16 @@ def get_arguments():
     parser.add_argument('--metric_multiplier_trainable', type=bool, default=False,
                         help='multiplier of cosine metric trainability')
     parser.add_argument('--polynomial_metric_order', type=int, default=1)
-    # MI term
-    parser.add_argument('--mi_weight', type=float, default=5.0,
+    # Cross modal consistency loss
+    parser.add_argument('--mi_weight', type=float, default=1.0,
                         help='The weight of the mutual information term between text and image distances')
     parser.add_argument('--mi_kernel_width', type=float, default=1.0,
                         help='The width of KDE kernel used to estmiate MI')
     parser.add_argument('--mi_train_offset', type=float, default=0.0,
                         help='The proportion of steps to delay the inclusion of MI loss into total loss')
+    parser.add_argument('--consistency_loss', type=str, default="CROSSCLASS", choices=[None, "NMSE", "MI", "CROSSCLASS"])
+    parser.add_argument('--cross_class_num_clusters', type=int, default=200)
+    parser.add_argument('--cross_class_metric_scale', type=float, default=5.0)
 
 
     args = parser.parse_args()
@@ -862,10 +866,11 @@ class ModelLoader:
             image_embeddings.append(image_embeddings_batch)
             text_embeddings.append(text_embeddings_batch)
             num_tot += len(images)
-            
+        
         image_embeddings = np.concatenate(image_embeddings)
         text_embeddings = np.concatenate(text_embeddings)
         
+        print("Computing metrics")
         metrics = ap_at_k_prototypes(support_embeddings=text_embeddings, query_embeddings=image_embeddings,
                                      class_ids=data_set.image_classes, k=50, num_texts=[1, 5, 10, 20, 40])
         
@@ -935,6 +940,35 @@ def test_pretrained_inception_model(images_pl, sess):
         print(np.max(logit_values, axis=-1))
         print(np.argmax(logit_values, axis=-1) - 1)
 
+        
+def get_consistency_loss(image_embeddings, text_embeddings, flags):
+    if flags.mi_weight:
+#         # TODO: this can be removed
+#         image_embeddings_cond = tf.cond(mi_weight > 0.0, lambda: image_embeddings, 
+#                                         lambda: tf.stop_gradient(image_embeddings))
+#         text_embeddings_cond = tf.cond(mi_weight > 0.0, lambda: text_embeddings, 
+#                                        lambda: tf.stop_gradient(text_embeddings))
+#     None, "NMSE", "MI", "CROSSCLASS"
+
+        image_distances = get_dist_mtx(image_embeddings)
+        text_distances = get_dist_mtx(text_embeddings)
+        
+        if flags.consistency_loss == "NMSE":
+            consistency_loss = get_rmse_loss(text_distances, image_distances, flags)
+        elif flags.consistency_loss == "MI":
+            consistency_loss = get_mi_loss(text_distances, image_distances, flags)
+        elif flags.consistency_loss == "CROSSCLASS":
+            consistency_loss = get_cross_classifier_loss(image_embeddings, text_embeddings, 
+                                                         flags, scope="crossclass_loss")
+        else:
+            consistency_loss = tf.Variable(0.0, trainable=False, 
+                                           name='dummy_consistency_loss', dtype=tf.float32)
+        tf.summary.scalar('loss/consistency_loss', consistency_loss)
+        consistency_loss = consistency_loss
+    else:
+        consistency_loss = 0.0
+    return consistency_loss
+
 
 def train(flags):
     log_dir = get_logdir_name(flags)
@@ -952,7 +986,6 @@ def train(flags):
     with tf.Graph().as_default():
         global_step = tf.Variable(0, trainable=False, name='global_step', dtype=tf.int64)
         is_training = tf.Variable(True, trainable=False, name='is_training', dtype=tf.bool)
-        mi_weight = tf.Variable(0.0, trainable=False, name='mi_weight', dtype=tf.float32)
         images_pl, text_pl, text_len_pl, match_labels_txt2img_pl, match_labels_img2txt_pl = \
             get_input_placeholders(batch_size=flags.train_batch_size,
                                    num_images=flags.num_images, num_texts=flags.num_texts,
@@ -967,34 +1000,19 @@ def train(flags):
                                                                         text_length=text_len_pl, flags=flags,
                                                                         is_training=True, reuse=False)
         loss_txt2img = tf.reduce_mean(
-            tf.nn.softmax_cross_entropy_with_logits(logits=logits,
-                                                    labels=tf.one_hot(match_labels_txt2img_pl, flags.train_batch_size)),
+            tf.nn.softmax_cross_entropy_with_logits_v2(logits=logits,
+                                                       labels=tf.one_hot(match_labels_txt2img_pl, flags.train_batch_size)),
             name='loss_txt2img')
         loss_img2txt = tf.reduce_mean(
-            tf.nn.softmax_cross_entropy_with_logits(logits=tf.transpose(logits, perm=[1, 0]),
-                                                    labels=tf.one_hot(match_labels_img2txt_pl, flags.train_batch_size)),
+            tf.nn.softmax_cross_entropy_with_logits_v2(logits=tf.transpose(logits, perm=[1, 0]),
+                                                       labels=tf.one_hot(match_labels_img2txt_pl, flags.train_batch_size)),
             name='loss_img2txt')
-
-        if flags.mi_weight:
-            # TODO: this can be removed
-            image_embeddings_cond = tf.cond(mi_weight > 0.0, lambda: image_embeddings, 
-                                            lambda: tf.stop_gradient(image_embeddings))
-            text_embeddings_cond = tf.cond(mi_weight > 0.0, lambda: text_embeddings, 
-                                           lambda: tf.stop_gradient(text_embeddings))
-            
-            image_distances = get_dist_mtx(image_embeddings_cond)
-            text_distances = get_dist_mtx(text_embeddings_cond)
-            
-            mi_loss = get_rmse_loss(text_distances, image_distances, flags)
-            # TODO: this can be removed
-            mi_loss = tf.where(tf.is_nan(mi_loss), tf.zeros_like(mi_loss), mi_loss)
-            tf.summary.scalar('loss/consistence_loss', mi_loss)
-            mi_loss_weighted = mi_weight * mi_loss
-        else:
-            mi_loss_weighted = 0.0
-
+        
+        mi_weight = tf.Variable(0.0, trainable=False, name='mi_weight', dtype=tf.float32)
+        consistency_loss = get_consistency_loss(image_embeddings, text_embeddings, flags)
+        
         regu_losses = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
-        loss_tot = tf.add_n([0.5 * loss_txt2img, 0.5 * loss_img2txt, mi_loss_weighted] + regu_losses)
+        loss_tot = tf.add_n([0.5 * loss_txt2img, 0.5 * loss_img2txt, consistency_loss*mi_weight] + regu_losses)
         misclass_txt2img = 1.0 - slim.metrics.accuracy(tf.argmax(logits, 1), match_labels_txt2img_pl)
         misclass_img2txt = 1.0 - slim.metrics.accuracy(tf.argmax(logits, 0), match_labels_img2txt_pl)
         main_train_op = get_main_train_op(loss_tot, global_step, flags)
