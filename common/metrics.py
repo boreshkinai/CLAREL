@@ -45,7 +45,8 @@ def get_prototypes(embeddings, labels, vectors_per_protype):
 
 def ap_at_k_prototypes(support_embeddings, query_embeddings, class_ids, k=50, num_texts=[1, 2, 3, 5, 10, 20, 50]):
     class_ids = np.array(class_ids)
-    kdtree_query = cKDTree(query_embeddings)
+    print("Compute KD-tree")
+    kdtree_query = cKDTree(query_embeddings, balanced_tree=False, compact_nodes=False)
     metrics = {}
     for current_num_texts in num_texts:
         prototypes = get_prototypes(embeddings=support_embeddings, labels=class_ids, 
