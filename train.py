@@ -28,7 +28,7 @@ from datasets import Dataset
 from datasets.dataset_list import get_dataset_splits
 from common.metrics import ap_at_k_prototypes
 from common.pretrained_models import IMAGE_MODEL_CHECKPOINTS
-from common.losses import get_rmse_loss, get_mi_loss, get_dist_mtx, get_cross_classifier_loss
+from common.losses import get_rmse_loss, get_mi_loss, get_dist_mtx, get_cross_classifier_loss, get_som_loss, get_classifier_loss
 
 
 tf.logging.set_verbosity(tf.logging.INFO)
@@ -58,7 +58,7 @@ def get_arguments():
     parser.add_argument('--train_batch_size', type=int, default=32, help='Training batch size.')
     parser.add_argument('--num_images', type=int, default=1, help='Number of image samples per image/text pair.')
     parser.add_argument('--num_texts', type=int, default=10, help='Number of text samples per image/text pair.')
-    parser.add_argument('--init_learning_rate', type=float, default=0.1006, help='Initial learning rate.')
+    parser.add_argument('--init_learning_rate', type=float, default=0.1002, help='Initial learning rate.')
     parser.add_argument('--save_summaries_secs', type=int, default=60, help='Time between saving summaries')
     parser.add_argument('--save_interval_secs', type=int, default=60, help='Time between saving model?')
     parser.add_argument('--optimizer', type=str, default='sgd', choices=['sgd', 'adam'])
@@ -76,7 +76,7 @@ def get_arguments():
     # Evaluation parameters
     parser.add_argument('--max_number_of_evaluations', type=float, default=float('inf'))
     parser.add_argument('--eval_interval_secs', type=int, default=120, help='Time between evaluating model?')
-    parser.add_argument('--eval_interval_steps', type=int, default=1000,
+    parser.add_argument('--eval_interval_steps', type=int, default=2500,
                         help='Number of train steps between evaluating model in the training loop')
     parser.add_argument('--eval_interval_fine_steps', type=int, default=1000,
                         help='Number of train steps between evaluating model in the training loop in the final phase')
@@ -128,11 +128,15 @@ def get_arguments():
                         help='The weight of the mutual information term between text and image distances')
     parser.add_argument('--mi_kernel_width', type=float, default=1.0,
                         help='The width of KDE kernel used to estmiate MI')
-    parser.add_argument('--mi_train_offset', type=float, default=0.0,
+    parser.add_argument('--mi_train_offset', type=float, default=0.1,
                         help='The proportion of steps to delay the inclusion of MI loss into total loss')
-    parser.add_argument('--consistency_loss', type=str, default="CROSSCLASS", choices=[None, "NMSE", "MI", "CROSSCLASS"])
-    parser.add_argument('--cross_class_num_clusters', type=int, default=200)
-    parser.add_argument('--cross_class_metric_scale', type=float, default=5.0)
+    parser.add_argument('--consistency_loss', type=str, default="SOM", choices=[None, "NMSE", "MI", "CROSSCLASS", "SOM"])
+    parser.add_argument('--cross_class_num_clusters', type=int, default=1024)
+    parser.add_argument('--cross_class_metric_scale', type=float, default=100.0)
+    parser.add_argument('--cross_class_decay', type=float, default=0.9)
+    parser.add_argument('--cross_class_sigma_0', type=float, default=1.0)
+    parser.add_argument('--num_classes_train', type=int, default=250)
+    
 
 
     args = parser.parse_args()
@@ -960,6 +964,8 @@ def get_consistency_loss(image_embeddings, text_embeddings, flags):
         elif flags.consistency_loss == "CROSSCLASS":
             consistency_loss = get_cross_classifier_loss(image_embeddings, text_embeddings, 
                                                          flags, scope="crossclass_loss")
+        elif flags.consistency_loss == "SOM":
+            consistency_loss = get_som_loss(image_embeddings, text_embeddings, flags)
         else:
             consistency_loss = tf.Variable(0.0, trainable=False, 
                                            name='dummy_consistency_loss', dtype=tf.float32)
