@@ -237,15 +237,17 @@ class Cvpr2016CubLoader(Dataset):
         batch_features = []
         batch_texts = []
         batch_text_lengths = []
-        for idx in batch_idxs:
+        class_labels = np.zeros((batch_size,), dtype=np.int64)
+        for i, idx in enumerate(batch_idxs):
             batch_features.append(self._sample_features(idx, num_images=num_images))
             texts, text_lengths = self._sample_texts(idx, num_texts=num_texts)
             batch_texts.append(texts)
             batch_text_lengths.append(text_lengths)
+            class_labels[i] = int(self.image_classes[idx])
         labels_txt2img = np.arange(batch_size, dtype=np.int32)
         labels_img2txt = np.arange(batch_size, dtype=np.int32)
         return np.array(batch_features), np.array(batch_texts), np.array(batch_text_lengths), \
-               (labels_txt2img, labels_img2txt)
+               (labels_txt2img, labels_img2txt), class_labels
 
     def _sample_images(self, idx: int, num_images: int):
         img_raw = self.raw_images[idx]

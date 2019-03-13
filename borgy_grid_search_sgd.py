@@ -32,23 +32,35 @@ import git
 os.environ['LANG'] = 'en_CA.UTF-8'
 
 if __name__ == "__main__":
-    exp_description = "word2vec_test"
+    exp_description = "classifier_test2"
 
     params = dict(
-        repeat=list(range(0, 1)),  # used to repeate the same experiment
+        repeat=list(range(0, 2)),  # used to repeate the same experiment
         dataset='cvpr2016_cub',
         number_of_steps=[100000],
-        num_texts=[5, 10],
+        num_texts=[10],
         num_images=1,
-        optimizer=['sgd'], # 'sgd', 'adam'
+        optimizer='sgd', # 'sgd', 'adam'
         init_learning_rate=0.1,
         lr_decay_rate=10.0,
-        train_batch_size=[32, 64],
+        train_batch_size=32,
 #         word_embed_dim=128,
-        metric_multiplier_init=[1.0, 5.0, 10.0],
+        metric_multiplier_init=5.0,
         rnn_size=512,
         embedding_size=1024,
-        dropout=[0.25, 0.5],
+        dropout=0.25,
+        num_text_cnn_filt=256,
+        num_text_cnn_blocks=2,
+        num_text_cnn_units=3,
+        text_feature_extractor=['cnn_bi_lstm'],
+        weight_decay=0.001,
+        image_feature_extractor='inception_v2',
+        mi_weight=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+        mi_kernel_width=0.1,
+        mi_train_offset=[0.0],
+        consistency_loss=["CLASSIFIER"],
+#         cross_class_decay=[0.8, 0.9, 0.95],
+#         cross_class_num_clusters=[256, 1024],
     )
 
     parser = argparse.ArgumentParser()
@@ -76,14 +88,14 @@ if __name__ == "__main__":
     params['commit'] = repo.head.object.hexsha
 
     borgy_args = [
-        "--image=images.borgy.elementai.lan/tensorflow/zeroshot-pairwise-tensorflow-1.8.0",
+        "--image=images.borgy.elementai.lan/tensorflow/zeroshot-pairwise-tensorflow-1.12.0",
         "-w", "/",
         "-e", "PYTHONPATH=%s" % repo_path,
         "-v", "/mnt/datasets/public/:/mnt/datasets/public/",
         "-v", "/mnt/home/boris/:/mnt/home/boris/",
         "--cpu=2",
         "--gpu=1",
-        "--mem=16",
+        "--mem=24",
         "--restartable"
     ]
 

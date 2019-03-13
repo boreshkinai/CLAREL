@@ -118,13 +118,19 @@ def get_cross_classifier_loss(features_modality1, features_modality2, flags, sco
 
 def get_classifier_loss(features_modality1, features_modality2, labels, flags, scope="classifier_loss"):
     with tf.variable_scope(scope, reuse=tf.AUTO_REUSE):
-        samples = tf.concat([features_modality1, features_modality2], axis=0)
-        labels = tf.concat([labels, labels], axis=0)
+        samples = tf.concat([features_modality1, features_modality2, 0.5*(features_modality1+features_modality2)], axis=0)
+        labels = tf.concat([labels, labels, labels], axis=0)
         logits = slim.fully_connected(samples, num_outputs=flags.num_classes_train, activation_fn=None, 
                                       normalizer_fn=None, trainable=True, weights_regularizer=None, 
                                       scope='classifier_fc')
         loss = tf.reduce_mean(
-            tf.nn.sparse_softmax_cross_entropy_with_logits(labels=labels, logits=logits_modality2))
+            tf.nn.sparse_softmax_cross_entropy_with_logits(labels=labels, logits=logits))
+        
+        accuracy = slim.metrics.accuracy(tf.argmax(logits, -1), labels)
+        
+        tf.summary.scalar('metrics/loss', loss)
+        tf.summary.scalar('metrics/accuracy', accuracy)
+        
     return loss
     
 

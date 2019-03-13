@@ -32,11 +32,17 @@ import git
 os.environ['LANG'] = 'en_CA.UTF-8'
 
 if __name__ == "__main__":
-    exp_description = "test"
+    exp_description = "adam_optimizer"
 
     params = dict(
         repeat=list(range(0, 1)),  # used to repeate the same experiment
         dataset='cvpr2016_cub',
+        num_texts=[1, 5, 10],
+        optimizer=['adam'], # 'sgd', 'adam'
+        init_learning_rate=[0.001],
+        lr_decay_rate=[2.0],
+        train_batch_size=[24, 32, 64],
+        word_embed_dim=[64, 128, 256],
     )
 
     parser = argparse.ArgumentParser()

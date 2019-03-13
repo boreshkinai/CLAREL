@@ -58,7 +58,7 @@ def get_arguments():
     parser.add_argument('--train_batch_size', type=int, default=32, help='Training batch size.')
     parser.add_argument('--num_images', type=int, default=1, help='Number of image samples per image/text pair.')
     parser.add_argument('--num_texts', type=int, default=10, help='Number of text samples per image/text pair.')
-    parser.add_argument('--init_learning_rate', type=float, default=0.1002, help='Initial learning rate.')
+    parser.add_argument('--init_learning_rate', type=float, default=0.1003, help='Initial learning rate.')
     parser.add_argument('--save_summaries_secs', type=int, default=60, help='Time between saving summaries')
     parser.add_argument('--save_interval_secs', type=int, default=60, help='Time between saving model?')
     parser.add_argument('--optimizer', type=str, default='sgd', choices=['sgd', 'adam'])
@@ -128,9 +128,10 @@ def get_arguments():
                         help='The weight of the mutual information term between text and image distances')
     parser.add_argument('--mi_kernel_width', type=float, default=1.0,
                         help='The width of KDE kernel used to estmiate MI')
-    parser.add_argument('--mi_train_offset', type=float, default=0.1,
+    parser.add_argument('--mi_train_offset', type=float, default=0.0,
                         help='The proportion of steps to delay the inclusion of MI loss into total loss')
-    parser.add_argument('--consistency_loss', type=str, default="SOM", choices=[None, "NMSE", "MI", "CROSSCLASS", "SOM"])
+    parser.add_argument('--consistency_loss', type=str, default="CLASSIFIER", choices=[None, "NMSE", "MI", "CROSSCLASS", 
+                                                                                "SOM", "CLASSIFIER"])
     parser.add_argument('--cross_class_num_clusters', type=int, default=1024)
     parser.add_argument('--cross_class_metric_scale', type=float, default=100.0)
     parser.add_argument('--cross_class_decay', type=float, default=0.9)
@@ -700,7 +701,12 @@ def get_input_placeholders(batch_size: int, image_size: int, num_images: int, nu
         text_length_placeholder = tf.placeholder(shape=(batch_size, num_texts), name='text_len', dtype=tf.int32)
         labels_txt2img = tf.placeholder(tf.int64, shape=(batch_size, ), name='match_labels_txt2img')
         labels_img2txt = tf.placeholder(tf.int64, shape=(batch_size, ), name='match_labels_img2txt')
-        return images_placeholder, text_placeholder, text_length_placeholder, labels_txt2img, labels_img2txt
+        if flags.consistency_loss == "CLASSIFIER":
+            labels_class = tf.placeholder(tf.int64, shape=(batch_size, ), name='class_labels')
+        else:
+            labels_class = None
+        
+        return images_placeholder, text_placeholder, text_length_placeholder, labels_txt2img, labels_img2txt, labels_class
 
 
 def get_images_placeholder(batch_size: int, num_images: int, image_size: int, flags: Namespace):
@@ -779,7 +785,7 @@ class ModelLoader:
         image_size = get_image_size(flags.data_dir)
 
         with tf.Graph().as_default():
-            images_pl, text_pl, text_len_pl, match_labels_txt2img, match_labels_img2txt = get_input_placeholders(
+            images_pl, text_pl, text_len_pl, match_labels_txt2img, match_labels_img2txt, _ = get_input_placeholders(
                 batch_size=batch_size, num_images=num_images, num_texts=num_texts, max_text_len=max_text_len,
                 image_size=image_size, flags=flags, scope='inputs')
             if batch_size:
@@ -833,7 +839,7 @@ class ModelLoader:
                 images, texts, text_len, match_labels = data_set.next_batch(
                     batch_size=self.batch_size, num_images=self.flags.num_images, num_texts=self.flags.num_texts)
             else:
-                images, texts, text_len, match_labels = data_set.next_batch_features(
+                images, texts, text_len, match_labels, _ = data_set.next_batch_features(
                     batch_size=self.batch_size, num_images=self.flags.num_images, num_texts=self.flags.num_texts)
 
             labels_txt2img, labels_img2txt = match_labels
@@ -945,7 +951,7 @@ def test_pretrained_inception_model(images_pl, sess):
         print(np.argmax(logit_values, axis=-1) - 1)
 
         
-def get_consistency_loss(image_embeddings, text_embeddings, flags):
+def get_consistency_loss(image_embeddings, text_embeddings, flags, labels=None):
     if flags.mi_weight:
 #         # TODO: this can be removed
 #         image_embeddings_cond = tf.cond(mi_weight > 0.0, lambda: image_embeddings, 
@@ -966,6 +972,8 @@ def get_consistency_loss(image_embeddings, text_embeddings, flags):
                                                          flags, scope="crossclass_loss")
         elif flags.consistency_loss == "SOM":
             consistency_loss = get_som_loss(image_embeddings, text_embeddings, flags)
+        elif flags.consistency_loss == "CLASSIFIER":
+            consistency_loss = get_classifier_loss(image_embeddings, text_embeddings, flags=flags, labels=labels)
         else:
             consistency_loss = tf.Variable(0.0, trainable=False, 
                                            name='dummy_consistency_loss', dtype=tf.float32)
@@ -992,7 +1000,7 @@ def train(flags):
     with tf.Graph().as_default():
         global_step = tf.Variable(0, trainable=False, name='global_step', dtype=tf.int64)
         is_training = tf.Variable(True, trainable=False, name='is_training', dtype=tf.bool)
-        images_pl, text_pl, text_len_pl, match_labels_txt2img_pl, match_labels_img2txt_pl = \
+        images_pl, text_pl, text_len_pl, match_labels_txt2img_pl, match_labels_img2txt_pl, labels_class = \
             get_input_placeholders(batch_size=flags.train_batch_size,
                                    num_images=flags.num_images, num_texts=flags.num_texts,
                                    image_size=image_size, max_text_len=max_text_len,
@@ -1015,10 +1023,12 @@ def train(flags):
             name='loss_img2txt')
         
         mi_weight = tf.Variable(0.0, trainable=False, name='mi_weight', dtype=tf.float32)
-        consistency_loss = get_consistency_loss(image_embeddings, text_embeddings, flags)
+        consistency_loss = get_consistency_loss(image_embeddings, text_embeddings, flags, labels=labels_class)
         
         regu_losses = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
-        loss_tot = tf.add_n([0.5 * loss_txt2img, 0.5 * loss_img2txt, consistency_loss*mi_weight] + regu_losses)
+        loss_tot = tf.add_n([0.5 * (1.0-mi_weight) * loss_txt2img, 
+                             0.5 * (1.0-mi_weight) * loss_img2txt, 
+                             consistency_loss*mi_weight] + regu_losses)
         misclass_txt2img = 1.0 - slim.metrics.accuracy(tf.argmax(logits, 1), match_labels_txt2img_pl)
         misclass_img2txt = 1.0 - slim.metrics.accuracy(tf.argmax(logits, 0), match_labels_img2txt_pl)
         main_train_op = get_main_train_op(loss_tot, global_step, flags)
@@ -1059,8 +1069,10 @@ def train(flags):
                         images, text, text_length, match_labels = dataset_splits[flags.train_split].next_batch(
                             batch_size=flags.train_batch_size, num_images=flags.num_images, num_texts=flags.num_texts)
                     else:
-                        images, text, text_length, match_labels = dataset_splits[flags.train_split].next_batch_features(
-                            batch_size=flags.train_batch_size, num_images=flags.num_images, num_texts=flags.num_texts)
+                        images, text, text_length, match_labels, class_labels = \
+                            dataset_splits[flags.train_split].next_batch_features(
+                                batch_size=flags.train_batch_size, 
+                                num_images=flags.num_images, num_texts=flags.num_texts)
 
                     labels_txt2img, labels_img2txt = match_labels
                     dt_batch = time.time() - dt_batch
@@ -1069,6 +1081,8 @@ def train(flags):
                                  text_pl: text,
                                  match_labels_txt2img_pl: labels_txt2img, match_labels_img2txt_pl: labels_img2txt,
                                  is_training: np.random.uniform() < flags.train_bn_proba}
+                    if labels_class is not None:
+                        feed_dict.update({labels_class: class_labels})
 
                     if flags.mi_weight and step > flags.mi_train_offset*flags.number_of_steps:
                         feed_dict.update({mi_weight: flags.mi_weight})
