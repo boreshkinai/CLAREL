@@ -62,7 +62,7 @@ class Xian2017CubLoader(Dataset):
 
     def load_cached(self):
         logging.info('Loading split %s' % self.split)
-        cache_filepath = os.path.join(self.data_dir, 'split_' + self.split + '.pkl')
+        cache_filepath = os.path.join(self.data_dir, 'split_' + self.split + '_xian2017.pkl')
         if os.path.isfile(cache_filepath):
             logging.info("Loading cached file %s" % cache_filepath)
             dt_load = time.time()

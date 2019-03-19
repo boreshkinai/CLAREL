@@ -43,8 +43,8 @@ def get_arguments():
     parser.add_argument('--data_dir', type=str, default=None, help='Path to the data.')
     parser.add_argument('--train_split', type=str, default='trainval', choices=['train', 'trainval'],
                         help='Split of the data to be used to perform operation.')
-    parser.add_argument('--dataset', type=str, default='cvpr2016_cub',
-                        choices=['cvpr2016_cub'], help='Dataset to train.')
+    parser.add_argument('--dataset', type=str, default='xian2017_cub',
+                        choices=['cvpr2016_cub', 'xian2017_cub'], help='Dataset to train.')
 
     # Training parameters
     parser.add_argument('--repeat', type=int, default=0)
@@ -58,7 +58,7 @@ def get_arguments():
     parser.add_argument('--train_batch_size', type=int, default=32, help='Training batch size.')
     parser.add_argument('--num_images', type=int, default=1, help='Number of image samples per image/text pair.')
     parser.add_argument('--num_texts', type=int, default=10, help='Number of text samples per image/text pair.')
-    parser.add_argument('--init_learning_rate', type=float, default=0.1003, help='Initial learning rate.')
+    parser.add_argument('--init_learning_rate', type=float, default=0.1005, help='Initial learning rate.')
     parser.add_argument('--save_summaries_secs', type=int, default=60, help='Time between saving summaries')
     parser.add_argument('--save_interval_secs', type=int, default=60, help='Time between saving model?')
     parser.add_argument('--optimizer', type=str, default='sgd', choices=['sgd', 'adam'])
@@ -124,13 +124,13 @@ def get_arguments():
                         help='multiplier of cosine metric trainability')
     parser.add_argument('--polynomial_metric_order', type=int, default=1)
     # Cross modal consistency loss
-    parser.add_argument('--mi_weight', type=float, default=1.0,
+    parser.add_argument('--mi_weight', type=float, default=0.0,
                         help='The weight of the mutual information term between text and image distances')
     parser.add_argument('--mi_kernel_width', type=float, default=1.0,
                         help='The width of KDE kernel used to estmiate MI')
     parser.add_argument('--mi_train_offset', type=float, default=0.0,
                         help='The proportion of steps to delay the inclusion of MI loss into total loss')
-    parser.add_argument('--consistency_loss', type=str, default="CLASSIFIER", choices=[None, "NMSE", "MI", "CROSSCLASS", 
+    parser.add_argument('--consistency_loss', type=str, default=None, choices=[None, "NMSE", "MI", "CROSSCLASS", 
                                                                                 "SOM", "CLASSIFIER"])
     parser.add_argument('--cross_class_num_clusters', type=int, default=1024)
     parser.add_argument('--cross_class_metric_scale', type=float, default=100.0)

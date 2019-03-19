@@ -1,8 +1,9 @@
 from datasets.cvpr2016_cub_loader import Cvpr2016CubLoader
+from datasets.xian2017_cub_loader import Xian2017CubLoader
 from datasets.fashion_gen import FashionGen
 from typing import List
 
-DATASETS = {'cvpr2016_cub': Cvpr2016CubLoader, 'fashion_gen': FashionGen}
+DATASETS = {'cvpr2016_cub': Cvpr2016CubLoader, 'xian2017_cub': Xian2017CubLoader, 'fashion_gen': FashionGen}
 
 
 def get_dataset_splits(dataset_name, data_dir, splits: List[str] = ['train', 'test', 'validation'], flags=None):
