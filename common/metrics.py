@@ -78,8 +78,8 @@ def ap_at_k_prototypes(support_embeddings, query_embeddings, class_ids, k=50, nu
             ap50[key] = ap50matches[key] / ap50counts[key]
 
         top1_acc /= len(query_embeddings)
-        metrics['AP@%d,#sentences%d'%(k, 10*current_num_texts)] = np.array(list(ap50.values())).mean()
-        metrics['Top-1 Acc,#sentences%d'%(10*current_num_texts)] = top1_acc
+        metrics['AP@%d/#sentences%d'%(k, 10*current_num_texts)] = np.array(list(ap50.values())).mean()
+        metrics['Top-1 Acc/#sentences%d'%(10*current_num_texts)] = top1_acc
     
     return metrics
 
@@ -110,9 +110,7 @@ def top1_gzsl(support_embeddings, query_embeddings, class_ids_support, class_ids
             
         for key in top1_acc_matches.keys():
             top1_acc[key] = top1_acc_matches[key] / top1_acc_counts[key]
-            
-        top1_acc /= len(query_embeddings)
-        metrics['Top-1 Acc GZSL,#sentences%d'%(10*current_num_texts)] = np.array(list(top1_acc.values())).mean()
-    
+        
+        metrics['Top-1 Acc/#sentences%d'%(10*current_num_texts)] = np.array(list(top1_acc.values())).mean()
     return metrics
 

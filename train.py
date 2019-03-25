@@ -26,7 +26,7 @@ from typing import List, Dict, Set
 from common.util import Namespace
 from datasets import Dataset
 from datasets.dataset_list import get_dataset_splits
-from common.metrics import ap_at_k_prototypes
+from common.metrics import ap_at_k_prototypes, top1_gzsl
 from common.pretrained_models import IMAGE_MODEL_CHECKPOINTS
 from common.losses import get_rmse_loss, get_mi_loss, get_dist_mtx, get_cross_classifier_loss, get_som_loss, get_classifier_loss
 
@@ -42,6 +42,8 @@ def get_arguments():
     # Dataset parameters
     parser.add_argument('--data_dir', type=str, default=None, help='Path to the data.')
     parser.add_argument('--train_split', type=str, default='trainval', choices=['train', 'trainval'],
+                        help='Split of the data to be used to perform operation.')
+    parser.add_argument('--test_split', type=str, default='test', choices=['test', 'val'],
                         help='Split of the data to be used to perform operation.')
     parser.add_argument('--dataset', type=str, default='xian2017_cub',
                         choices=['cvpr2016_cub', 'xian2017_cub'], help='Dataset to train.')
@@ -92,8 +94,8 @@ def get_arguments():
     parser.add_argument('--embedding_size', type=int, default=1024)
     parser.add_argument('--embedding_pooled', type=bool, default=True)
     # Image feature extractor
-    parser.add_argument('--image_feature_extractor', type=str, default='inception_v2',
-                        choices=['simple_res_net', 'inception_v3', 'inception_v2'], help='Which feature extractor to use')
+    parser.add_argument('--image_feature_extractor', type=str, default='resnet101',
+                        choices=['simple_res_net', 'inception_v3', 'inception_v2', 'resnet101'], help='Which feature extractor to use')
     parser.add_argument('--image_fe_trainable', type=bool, default=False)
     parser.add_argument('--num_filters', type=int, default=64)
     parser.add_argument('--num_units_in_block', type=int, default=3)
@@ -714,7 +716,7 @@ def get_images_placeholder(batch_size: int, num_images: int, image_size: int, fl
         images_placeholder = tf.placeholder(tf.float32, shape=(batch_size, num_images, image_size, image_size, 3),
                                             name='images')
     else:
-        num_features_dict = {'simple_res_net': 512, 'inception_v3': 2048, 'inception_v2': 1024}
+        num_features_dict = {'simple_res_net': 512, 'inception_v3': 2048, 'inception_v2': 1024, 'resnet101': 2048}
         images_placeholder = tf.placeholder(tf.float32, name='images',
                                             shape=(batch_size, num_images,
                                                    num_features_dict[flags.image_feature_extractor]))
@@ -854,17 +856,8 @@ class ModelLoader:
             num_correct_img2txt += sum(labels_pred_img2txt == labels_img2txt)
             num_tot += len(labels_pred_txt2img)
         return {'acc_txt2img': num_correct_txt2img / num_tot, 'acc_img2txt': num_correct_img2txt / num_tot}
-
-    def eval_acc(self, data_set: Dataset, batch_size:int):
-        """
-        Runs evaluation loop over dataset
-        :param data_set:
-        :return:
-        """
-        print("Computing embeddings")
-        num_correct_txt2img = 0.0
-        num_correct_img2txt = 0.0
-        num_tot = 0.0
+    
+    def predict_all(self, data_set, batch_size):
         image_embeddings, text_embeddings = [], []
         if self.flags.image_fe_trainable:
             batch_generator = data_set.sequential_evaluation_batches
@@ -875,16 +868,67 @@ class ModelLoader:
             image_embeddings_batch, text_embeddings_batch = self.predict(images, texts, text_lengths)
             image_embeddings.append(image_embeddings_batch)
             text_embeddings.append(text_embeddings_batch)
-            num_tot += len(images)
-        
         image_embeddings = np.concatenate(image_embeddings)
         text_embeddings = np.concatenate(text_embeddings)
-        
-        print("Computing metrics")
+        return image_embeddings, text_embeddings
+    
+    def eval_acc(self, data_set: Dataset, batch_size:int):
+        """
+        Runs evaluation loop over dataset
+        :param data_set:
+        :return:
+        """
+        logging.info("Computing embeddings")
+        image_embeddings, text_embeddings = self.predict_all(data_set, batch_size)
+        logging.info("Computing metrics")
         metrics = ap_at_k_prototypes(support_embeddings=text_embeddings, query_embeddings=image_embeddings,
-                                     class_ids=data_set.image_classes, k=50, num_texts=[1, 5, 10, 20, 40])
-        
+                                     class_ids=data_set.image_classes, k=50, num_texts=[1, 5, 10, 20, 40, 100])
         return metrics, image_embeddings, text_embeddings
+    
+    def harmonic_mean(self, x, y):
+        return 2*x*y/(x+y)
+        
+    def eval_acc_gzsh(self, train_loader: Dataset, test_loader: Dataset, batch_size:int):
+        """
+        Runs evaluation loop in the generalized zero shot learning scenario
+        :param data_set:
+        :return:
+        """
+        logging.info("Computing train embeddings")
+        image_embeddings_train, text_embeddings_train = self.predict_all(train_loader, batch_size)
+        logging.info("Computing test embeddings")
+        image_embeddings_test, text_embeddings_test = self.predict_all(test_loader, batch_size)
+        
+        logging.info("Computing classical zero-shot performance metrics, test")
+        metrics_test = ap_at_k_prototypes(support_embeddings=text_embeddings_test, 
+                                     query_embeddings=image_embeddings_test,
+                                     class_ids=test_loader.image_classes, k=50, num_texts=[1, 5, 10, 20, 40, 100])
+        logging.info("Computing classical zero-shot performance metrics, train")
+        metrics_train = ap_at_k_prototypes(support_embeddings=text_embeddings_train, 
+                                     query_embeddings=image_embeddings_train,
+                                     class_ids=train_loader.image_classes, k=50, num_texts=[1, 5, 10, 20, 40, 100])
+        logging.info("Computing generalized zero-shot performance metrics")
+        seen_unseen_text_embeddings = np.concatenate([text_embeddings_train, text_embeddings_test], axis=0)
+        seen_unseen_classes = np.concatenate([train_loader.image_classes, test_loader.image_classes], axis=0)
+        metrics_gzsl_unseen = top1_gzsl(support_embeddings=seen_unseen_text_embeddings, query_embeddings=image_embeddings_test, 
+                                 class_ids_support=seen_unseen_classes, class_ids_query=test_loader.image_classes, 
+                                 num_texts=[1, 5, 10, 20, 40, 100])
+        metrics_gzsl_seen = top1_gzsl(support_embeddings=seen_unseen_text_embeddings, query_embeddings=image_embeddings_train, 
+                                 class_ids_support=seen_unseen_classes, class_ids_query=train_loader.image_classes, 
+                                 num_texts=[1, 5, 10, 20, 40, 100])
+        metrics_gzsl = {}
+        for key in metrics_gzsl_unseen.keys():
+            metrics_gzsl["test_U_"+key] = metrics_gzsl_unseen[key]
+            metrics_gzsl["test_S_"+key] = metrics_gzsl_seen[key]
+            metrics_gzsl["test_H_"+key] = self.harmonic_mean(metrics_gzsl_unseen[key], metrics_gzsl_seen[key])
+        metrics = {}
+        for key in metrics_train.keys():
+            metrics["train_"+key] = metrics_train[key]
+        for key in metrics_test.keys():
+            metrics["test_"+key] = metrics_test[key]
+            
+        metrics.update(metrics_gzsl)
+        return metrics
 
 
 def eval_acc_batch(flags: Namespace, datasets: Dict[str, Dataset]):
@@ -908,16 +952,14 @@ def eval_acc(flags: Namespace, datasets: Dict[str, Dataset]):
     model = ModelLoader(model_path=flags.pretrained_model_dir, 
                     batch_size=None, num_images=10, num_texts=10, max_text_len=max_text_len)
     
-    results = {}
-    for data_name, dataset in datasets.items():
-        results_eval, _, _ = model.eval_acc(data_set=dataset, batch_size=10)
-        for result_name, result_val in results_eval.items():
-            results["evaluation_full_%s/"%(data_name) + result_name] = result_val
-            logging.info("accuracy_%s: %.3g" % (result_name + "_" + data_name, result_val))
+    results_eval = model.eval_acc_gzsh(train_loader=datasets[flags.train_split], 
+                                       test_loader=datasets[flags.test_split], batch_size=10)
+    for result_name, result_val in results_eval.items():
+        logging.info("%s: %.3g" % (result_name, result_val))
 
     log_dir = get_logdir_name(flags)
     eval_writer = summary_writer(log_dir + '/eval')
-    eval_writer(model.step, **results)
+    eval_writer(model.step, **results_eval)
 
 
 def get_image_fe_restorer(flags: Namespace):
@@ -995,7 +1037,7 @@ def train(flags):
 
     # Get datasets
     dataset_splits = get_dataset_splits(dataset_name=flags.dataset, data_dir=flags.data_dir,
-                                        splits=[flags.train_split, 'test', 'val'], flags=flags)
+                                        splits=[flags.train_split, flags.test_split], flags=flags)
     max_text_len = dataset_splits[flags.train_split].max_text_len
     with tf.Graph().as_default():
         global_step = tf.Variable(0, trainable=False, name='global_step', dtype=tf.int64)
