@@ -1,6 +1,7 @@
 from scipy.spatial import cKDTree
 from tqdm import tqdm
 import numpy as np
+import logging
 
 
 def ap_at_k_nn(support_embeddings, query_embeddings, class_ids, k=50):
@@ -84,16 +85,52 @@ def ap_at_k_prototypes(support_embeddings, query_embeddings, class_ids, k=50, nu
     return metrics
 
 
-def top1_gzsl(support_embeddings, query_embeddings, class_ids_support, class_ids_query, num_texts=[1, 2, 3, 5, 10, 20, 50]):
+def top1_gzsl(support_embeddings, query_embeddings, class_ids_support, class_ids_query, 
+              num_texts=[1, 2, 3, 5, 10, 20, 50], seen_unseen_subsets=None):
     class_ids_query = np.array(class_ids_query)
     class_ids_support = np.array(class_ids_support)
     metrics = {}
-    for current_num_texts in num_texts:
+    for current_num_texts in tqdm(num_texts):
+        prototypes = get_prototypes(embeddings=support_embeddings, labels=class_ids_support, 
+                                    vectors_per_protype=current_num_texts)
+        class_ids_prototypes = np.array(list(prototypes.keys()))
+        array_prototypes = np.array(list(prototypes.values()))
+        
+        seen_unseen_flag = np.isin(class_ids_prototypes, seen_unseen_subsets['seen']).astype(np.float32)
+        
+        # Measure generalized zero-shot classification accuracy
+        # for each sample from query set, identify the closest member of support set
+        # count the number of times the class of the member identified matches the class of the query
+        dist = np.sum(np.square(array_prototypes[:,:,None] - query_embeddings.transpose()), axis=1)
+        dist = dist * (0.05*seen_unseen_flag[:,None] + 1.0)
+        nn_idxs = np.argmin(dist, axis=0)
+        top1_acc_matches = {}
+        top1_acc_counts = {}
+        top1_acc = {} 
+        for query_id, nn_idx in enumerate(nn_idxs):
+            actual_class = class_ids_query[query_id]
+            nearest_class = class_ids_prototypes[nn_idx]
+            top1_acc_matches[actual_class] = top1_acc_matches.get(actual_class, 0.0) + np.float(nearest_class == actual_class)
+            top1_acc_counts[actual_class] = top1_acc_counts.get(actual_class, 0.0) + 1
+            
+        for key in top1_acc_matches.keys():
+            top1_acc[key] = top1_acc_matches[key] / top1_acc_counts[key]
+        
+        metrics['Top-1 Acc/#sentences%d'%(10*current_num_texts)] = np.array(list(top1_acc.values())).mean()
+    return metrics
+
+
+def top1_gzsl_kdtree(support_embeddings, query_embeddings, class_ids_support, class_ids_query, num_texts=[1, 2, 3, 5, 10, 20, 50]):
+    class_ids_query = np.array(class_ids_query)
+    class_ids_support = np.array(class_ids_support)
+    metrics = {}
+    for current_num_texts in tqdm(num_texts):
         prototypes = get_prototypes(embeddings=support_embeddings, labels=class_ids_support, 
                                     vectors_per_protype=current_num_texts)
         kdtree_support = cKDTree(np.array(list(prototypes.values())))
         class_ids_prototypes = np.array(list(prototypes.keys()))
-    
+        array_prototypes = np.array(list(prototypes.values()))
+        
         # Measure generalized zero-shot classification accuracy
         # for each sample from query set, identify the closest member of support set
         # count the number of times the class of the member identified matches the class of the query
