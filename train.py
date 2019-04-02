@@ -89,9 +89,8 @@ def get_arguments():
                         default='./logs/batch_size-32-lr-0.122-lr_anneal-cos-epochs-100.0-dropout-1.0-optimizer-sgd-weight_decay-0.0005-augment-False-num_filters-64-feature_extractor-simple_res_net-task_encoder-class_mean-attention_num_filters-32/train',
                         help='Path to the pretrained model to run the nearest neigbor baseline test.')
     # Architecture parameters
-    parser.add_argument('--dropout', type=float, default=0.25)
+    parser.add_argument('--dropout', type=float, default=0.0)
     parser.add_argument('--weight_decay', type=float, default=0.001)
-    parser.add_argument('--embedding_size', type=int, default=1024)
     parser.add_argument('--embedding_pooled', type=bool, default=True)
     # Image feature extractor
     parser.add_argument('--image_feature_extractor', type=str, default='resnet101',
@@ -118,7 +117,10 @@ def get_arguments():
     parser.add_argument('--num_text_cnn_units', type=int, default=3)
     parser.add_argument('--num_text_cnn_blocks', type=int, default=2)
     
-
+    
+    parser.add_argument('--embedding_size', type=int, default=1024)
+    parser.add_argument('--latent_dim', type=int, default=256)
+    parser.add_argument('--hidden_dim', type=int, default=1560)
     
 
     parser.add_argument('--metric_multiplier_init', type=float, default=5.0, help='multiplier of cosine metric')
@@ -331,6 +333,34 @@ def get_inception_v3(images, flags, is_training=False, reuse=None, scope=None):
     return h
 
 
+def get_encoder(h, flags, is_training, scope="encoder"):
+    with tf.variable_scope(scope, reuse=tf.AUTO_REUSE):
+        with _get_fc_scope(is_training, flags):
+            if flags.hidden_dim > 0:
+                h = slim.fully_connected(h, num_outputs=flags.hidden_dim, 
+                                         weights_regularizer=tf.contrib.layers.l2_regularizer(scale=flags.weight_decay_fc),
+                                         scope='hidden_encoder_layer')
+            if flags.latent_dim > 0:
+                h = slim.fully_connected(h, num_outputs=flags.latent_dim, 
+                                         weights_regularizer=tf.contrib.layers.l2_regularizer(scale=flags.weight_decay_fc),
+                                         scope='latent_space_layer')
+    return h
+
+                
+def get_decoder(h, flags, is_training, scope="decoder"):
+    with tf.variable_scope(scope, reuse=tf.AUTO_REUSE):
+        with _get_fc_scope(is_training, flags):
+            if flags.hidden_dim > 0:
+                h = slim.fully_connected(h, num_outputs=flags.hidden_dim, 
+                                         weights_regularizer=tf.contrib.layers.l2_regularizer(scale=flags.weight_decay_fc),
+                                         scope='hidden_decoder_layer')
+            if flags.embedding_size > 0:
+                h = slim.fully_connected(h, num_outputs=flags.embedding_size, 
+                                         activation_fn=None,
+                                         scope='feature_space_layer')
+    return h
+
+
 def get_image_feature_extractor(images: tf.Tensor, flags, is_training=False, scope='image_feature_extractor', reuse=None):
     """
         Image feature extractor selector
@@ -361,15 +391,19 @@ def get_image_feature_extractor(images: tf.Tensor, flags, is_training=False, sco
 
     h = tf.reduce_mean(h, axis=1, keepdims=False)
     
+    with _get_fc_scope(is_training, flags):
+        shortcut = slim.fully_connected(h, num_outputs=flags.embedding_size, scope='image_shortcut')
+                
+    h = get_encoder(h, flags=flags, is_training=is_training, scope="image_encoder")
+    
     conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
     with conv2d_arg_scope, dropout_arg_scope:
         if flags.dropout:
             h = slim.dropout(h, scope='image_dropout', keep_prob=1.0 - flags.dropout)
-
-    # Bottleneck layer
-    if flags.embedding_size:
-        with _get_fc_scope(is_training, flags):
-            h = slim.fully_connected(h, num_outputs=flags.embedding_size, scope='image_feature_adaptor')
+            
+    h = get_decoder(h, flags=flags, is_training=is_training, scope="image_decoder")
+    h = tf.nn.relu(shortcut + h)
+            
     return h
 
 
@@ -402,7 +436,6 @@ def get_2016cnn_bi_lstm(text, text_length, flags, embedding_initializer=None,
                                              scope='TextEmbedding')
 
         h = tf.expand_dims(h, 1)
-        print(h.get_shape().as_list())
         conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
         with conv2d_arg_scope, dropout_arg_scope:
 
@@ -432,18 +465,17 @@ def get_2016cnn_bi_lstm(text, text_length, flags, embedding_initializer=None,
 
         mask = tf.expand_dims(tf.sequence_mask(text_length,
                                                maxlen=h.get_shape().as_list()[1], dtype=tf.float32), axis=-1)
-        print(tf.shape(h)[1])
-        print(mask.get_shape().as_list())
         h = tf.reduce_sum(tf.multiply(h, mask), axis=[1]) / tf.reduce_sum(mask, axis=[1])
-        conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
-        with conv2d_arg_scope, dropout_arg_scope:
-            if flags.dropout:
-                h = slim.dropout(h, scope='text_dropout', keep_prob=1.0 - flags.dropout)
+        
+#         h = get_encoder(h, flags=flags, is_training=is_training, scope="text_encoder")
+        
+#         conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
+#         with conv2d_arg_scope, dropout_arg_scope:
+#             if flags.dropout:
+#                 h = slim.dropout(h, scope='text_dropout', keep_prob=1.0 - flags.dropout)
 
-        # Bottleneck layer
-        if flags.embedding_size:
-            with _get_fc_scope(is_training, flags):
-                h = slim.fully_connected(h, num_outputs=flags.embedding_size, scope='text_feature_adaptor')
+#         h = get_decoder(h, flags=flags, is_training=is_training, scope="text_decoder")
+        
     return h
 
 
@@ -493,11 +525,7 @@ def get_cnn_bi_lstm(text, text_length, flags, embedding_initializer=None,
 
                 h = slim.max_pool2d(h, kernel_size=[1, 2], stride=[1, 2], padding='SAME', scope='text_max_pool' + str(i))
                 text_length = tf.cast(tf.ceil(tf.div(tf.cast(text_length, tf.float32), 2.0)), text_length.dtype)
-        h = tf.squeeze(h, [1])
-        
-        print(h.get_shape().as_list())
-        print(text_length.get_shape().as_list())
-        
+        h = tf.squeeze(h, [1])        
 
         cells_fw = [tf.nn.rnn_cell.LSTMCell(size) for size in [flags.rnn_size]]
         cells_bw = [tf.nn.rnn_cell.LSTMCell(size) for size in [flags.rnn_size]]
@@ -507,20 +535,19 @@ def get_cnn_bi_lstm(text, text_length, flags, embedding_initializer=None,
         
         mask = tf.expand_dims(tf.sequence_mask(text_length, 
                                                maxlen=h.get_shape().as_list()[1], dtype=tf.float32), axis=-1)
-        print(tf.shape(h)[1])
-        print(mask.get_shape().as_list())
         h = tf.reduce_sum(tf.multiply(h, mask), axis=[1]) / tf.reduce_sum(mask, axis=[1])
-        conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
-        with conv2d_arg_scope, dropout_arg_scope:
-            if flags.dropout:
-                h = slim.dropout(h, 
-                                 scope=scope+'/text_dropout', keep_prob=1.0 - flags.dropout)
+        
+#         conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
+#         with conv2d_arg_scope, dropout_arg_scope:
+#             if flags.dropout:
+#                 h = slim.dropout(h, 
+#                                  scope=scope+'/text_dropout', keep_prob=1.0 - flags.dropout)
 
-        # Bottleneck layer
-        if flags.embedding_size:
-            with _get_fc_scope(is_training, flags):
-                h = slim.fully_connected(h, num_outputs=flags.embedding_size, 
-                                         scope=scope+'/text_feature_adaptor')
+#         # Bottleneck layer
+#         if flags.embedding_size:
+#             with _get_fc_scope(is_training, flags):
+#                 h = slim.fully_connected(h, num_outputs=flags.embedding_size, 
+#                                          scope=scope+'/text_feature_adaptor')
 
     return h
 
@@ -568,16 +595,16 @@ def get_simple_bi_lstm(text, text_length, flags, embedding_initializer=None,
         mask = tf.expand_dims(tf.sequence_mask(text_length, maxlen=tf.shape(text)[1], dtype=tf.float32), axis=-1)
         h = tf.reduce_sum(tf.multiply(h, mask), axis=[1]) / tf.reduce_sum(mask, axis=[1])
 
-        conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
-        activation_fn = ACTIVATION_MAP[flags.activation]
-        with conv2d_arg_scope, dropout_arg_scope:
-            if flags.dropout:
-                h = slim.dropout(h, scope='text_dropout', keep_prob=1.0 - flags.dropout)
+#         conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
+#         activation_fn = ACTIVATION_MAP[flags.activation]
+#         with conv2d_arg_scope, dropout_arg_scope:
+#             if flags.dropout:
+#                 h = slim.dropout(h, scope='text_dropout', keep_prob=1.0 - flags.dropout)
 
-        # Bottleneck layer
-        if flags.embedding_size:
-            with _get_fc_scope(is_training, flags):
-                h = slim.fully_connected(h, num_outputs=flags.embedding_size, scope='text_feature_adaptor')
+#         # Bottleneck layer
+#         if flags.embedding_size:
+#             with _get_fc_scope(is_training, flags):
+#                 h = slim.fully_connected(h, num_outputs=flags.embedding_size, scope='text_feature_adaptor')
                 
     return h
 
@@ -612,7 +639,19 @@ def get_text_feature_extractor(text, text_length, flags, embedding_initializer=N
         h = get_2016cnn_bi_lstm(text, text_length, flags=flags,
                             embedding_initializer=embedding_initializer, is_training=is_training,
                             reuse=reuse, scope=scope)
+    
+    with _get_fc_scope(is_training, flags):
+        shortcut = slim.fully_connected(h, num_outputs=flags.embedding_size, scope='text_shortcut')
+        
+    h = get_encoder(h, flags=flags, is_training=is_training, scope="text_encoder")
+        
+    conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
+    with conv2d_arg_scope, dropout_arg_scope:
+        if flags.dropout:
+            h = slim.dropout(h, scope='text_dropout', keep_prob=1.0 - flags.dropout)
 
+    h = get_decoder(h, flags=flags, is_training=is_training, scope="text_decoder")
+    h = tf.nn.relu(h + shortcut)
 
     if len(original_shape) == 3:
         h = tf.reshape(h, shape=([-1] + [original_shape[1], h.get_shape().as_list()[-1]]))
@@ -899,23 +938,28 @@ class ModelLoader:
         logging.info("Computing test embeddings")
         image_embeddings_test, text_embeddings_test = self.predict_all(test_loader, batch_size)
         
-        logging.info("Computing classical zero-shot performance metrics, test")
-        metrics_test = ap_at_k_prototypes(support_embeddings=text_embeddings_test, 
-                                     query_embeddings=image_embeddings_test,
-                                     class_ids=test_loader.image_classes, k=50, num_texts=[1, 5, 10, 20, 40, 100])
-        logging.info("Computing classical zero-shot performance metrics, train")
-        metrics_train = ap_at_k_prototypes(support_embeddings=text_embeddings_train, 
-                                     query_embeddings=image_embeddings_train,
-                                     class_ids=train_loader.image_classes, k=50, num_texts=[1, 5, 10, 20, 40, 100])
+#         logging.info("Computing classical zero-shot performance metrics, test")
+#         metrics_test = ap_at_k_prototypes(support_embeddings=text_embeddings_test, 
+#                                      query_embeddings=image_embeddings_test,
+#                                      class_ids=test_loader.image_classes, k=50, num_texts=[1, 5, 10, 20, 40, 100])
+#         logging.info("Computing classical zero-shot performance metrics, train")
+#         metrics_train = ap_at_k_prototypes(support_embeddings=text_embeddings_train, 
+#                                      query_embeddings=image_embeddings_train,
+#                                      class_ids=train_loader.image_classes, k=50, num_texts=[1, 5, 10, 20, 40, 100])
+        metrics_test={}
+        metrics_train={}
         logging.info("Computing generalized zero-shot performance metrics")
         seen_unseen_text_embeddings = np.concatenate([text_embeddings_train, text_embeddings_test], axis=0)
         seen_unseen_classes = np.concatenate([train_loader.image_classes, test_loader.image_classes], axis=0)
+        seen_unseen_subsets = {}
+        seen_unseen_subsets['seen'] = list(set(train_loader.image_classes))
+        seen_unseen_subsets['unseen'] = list(set(test_loader.image_classes))
         metrics_gzsl_unseen = top1_gzsl(support_embeddings=seen_unseen_text_embeddings, query_embeddings=image_embeddings_test, 
                                  class_ids_support=seen_unseen_classes, class_ids_query=test_loader.image_classes, 
-                                 num_texts=[1, 5, 10, 20, 40, 100])
+                                 num_texts=[1, 5, 10, 20, 40, 100], seen_unseen_subsets=seen_unseen_subsets)
         metrics_gzsl_seen = top1_gzsl(support_embeddings=seen_unseen_text_embeddings, query_embeddings=image_embeddings_train, 
                                  class_ids_support=seen_unseen_classes, class_ids_query=train_loader.image_classes, 
-                                 num_texts=[1, 5, 10, 20, 40, 100])
+                                 num_texts=[1, 5, 10, 20, 40, 100], seen_unseen_subsets=seen_unseen_subsets)
         metrics_gzsl = {}
         for key in metrics_gzsl_unseen.keys():
             metrics_gzsl["test_U_"+key] = metrics_gzsl_unseen[key]
@@ -928,7 +972,7 @@ class ModelLoader:
             metrics["test_"+key] = metrics_test[key]
             
         metrics.update(metrics_gzsl)
-        return metrics
+        return metrics, (seen_unseen_text_embeddings, image_embeddings_train, image_embeddings_test)
 
 
 def eval_acc_batch(flags: Namespace, datasets: Dict[str, Dataset]):
