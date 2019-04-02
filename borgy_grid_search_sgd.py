@@ -32,12 +32,12 @@ import git
 os.environ['LANG'] = 'en_CA.UTF-8'
 
 if __name__ == "__main__":
-    exp_description = "classifier_test2"
+    exp_description = "encoder_decoder_test"
 
     params = dict(
-        repeat=list(range(0, 2)),  # used to repeate the same experiment
-        dataset='cvpr2016_cub',
-        number_of_steps=[100000],
+        repeat=list(range(0, 1)),  # used to repeate the same experiment
+        dataset='xian2017_cub',
+        number_of_steps=[100001],
         num_texts=[10],
         num_images=1,
         optimizer='sgd', # 'sgd', 'adam'
@@ -47,20 +47,23 @@ if __name__ == "__main__":
 #         word_embed_dim=128,
         metric_multiplier_init=5.0,
         rnn_size=512,
-        embedding_size=1024,
-        dropout=0.25,
+        embedding_size=[512],
+        hidden_dim=[0, 1024],
+        latent_dim=[0, 128, 512],
+        dropout=[0.0, 0.25],
         num_text_cnn_filt=256,
         num_text_cnn_blocks=2,
         num_text_cnn_units=3,
         text_feature_extractor=['cnn_bi_lstm'],
         weight_decay=0.001,
-        image_feature_extractor='inception_v2',
-        mi_weight=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
-        mi_kernel_width=0.1,
-        mi_train_offset=[0.0],
-        consistency_loss=["CLASSIFIER"],
+        weight_decay_fc=[0.001, 1e-4, 1e-5],
+        image_feature_extractor='resnet101',
+#         mi_weight=[0.0, 0.2, 0.4, 0.6, 0.8, 0.9],
+#         mi_kernel_width=[0.001, 0.01, 0.1],
+#         mi_train_offset=0.0,
+#         consistency_loss=["SOM", "NMSE", "MI"], # ["CLASSIFIER", "SOM"],
 #         cross_class_decay=[0.8, 0.9, 0.95],
-#         cross_class_num_clusters=[256, 1024],
+#         cross_class_num_clusters=[1024],
     )
 
     parser = argparse.ArgumentParser()
