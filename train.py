@@ -45,8 +45,8 @@ def get_arguments():
                         help='Split of the data to be used to perform operation.')
     parser.add_argument('--test_split', type=str, default='test', choices=['test', 'val'],
                         help='Split of the data to be used to perform operation.')
-    parser.add_argument('--dataset', type=str, default='xian2017_cub',
-                        choices=['cvpr2016_cub', 'xian2017_cub'], help='Dataset to train.')
+    parser.add_argument('--dataset', type=str, default='xian2018_flowers',
+                        choices=['cvpr2016_cub', 'xian2017_cub', 'xian2018_flowers'], help='Dataset to train.')
 
     # Training parameters
     parser.add_argument('--repeat', type=int, default=0)
@@ -119,8 +119,8 @@ def get_arguments():
     
     
     parser.add_argument('--embedding_size', type=int, default=1024)
-    parser.add_argument('--latent_dim', type=int, default=256)
-    parser.add_argument('--hidden_dim', type=int, default=1560)
+    parser.add_argument('--latent_dim', type=int, default=0)
+    parser.add_argument('--hidden_dim', type=int, default=0)
     
 
     parser.add_argument('--metric_multiplier_init', type=float, default=5.0, help='multiplier of cosine metric')
@@ -141,6 +141,7 @@ def get_arguments():
     parser.add_argument('--cross_class_decay', type=float, default=0.9)
     parser.add_argument('--cross_class_sigma_0', type=float, default=1.0)
     parser.add_argument('--num_classes_train', type=int, default=250)
+    parser.add_argument('--weight_decay_fc', type=float, default=0.001)
     
 
 
@@ -996,7 +997,7 @@ def eval_acc(flags: Namespace, datasets: Dict[str, Dataset]):
     model = ModelLoader(model_path=flags.pretrained_model_dir, 
                     batch_size=None, num_images=10, num_texts=10, max_text_len=max_text_len)
     
-    results_eval = model.eval_acc_gzsh(train_loader=datasets[flags.train_split], 
+    results_eval, _ = model.eval_acc_gzsh(train_loader=datasets[flags.train_split], 
                                        test_loader=datasets[flags.test_split], batch_size=10)
     for result_name, result_val in results_eval.items():
         logging.info("%s: %.3g" % (result_name, result_val))
