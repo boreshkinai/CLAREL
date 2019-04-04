@@ -4,16 +4,12 @@ import argparse
 import pathlib
 import urllib.request as request
 import zipfile
+from download_cvpr2016_flowers import DEFAULT_FLOWERS_DIR, DEFAULT_DIR
 
 # Downloader for the new splits of the FLOWERS dataset
 # https://www.mpi-inf.mpg.de/departments/computer-vision-and-multimodal-computing/research/zero-shot-learning/feature-generating-networks-for-zero-shot-learning/
 PROPOSED_SPLITS_URL = "http://datasets.d2.mpi-inf.mpg.de/xian/cvpr18xian.zip"
 FILE_NAME_PROPOSED_SPLITS = 'cvpr18xian.zip'
-
-
-DEFAULT_DIR = os.path.join(os.sep, 'mnt', 'datasets', 'public', 'research', 'cvpr2016_flowers')
-DEFAULT_FLOWERS_DIR = 'jpg'
-
 
 
 def download_and_uncompress_dataset(dataset_dir: str):
