@@ -35,7 +35,7 @@ if __name__ == "__main__":
     exp_description = "encoder_decoder_test"
 
     params = dict(
-        repeat=list(range(0, 1)),  # used to repeate the same experiment
+        repeat=list(range(0, 5)),  # used to repeate the same experiment
         dataset='xian2017_cub',
         number_of_steps=[100001],
         num_texts=[10],
@@ -48,22 +48,17 @@ if __name__ == "__main__":
         metric_multiplier_init=5.0,
         rnn_size=512,
         embedding_size=[512],
-        hidden_dim=[0, 1024],
-        latent_dim=[0, 128, 512],
+        hidden_dim=0,
+        latent_dim=0,
         dropout=[0.0, 0.25],
         num_text_cnn_filt=256,
         num_text_cnn_blocks=2,
         num_text_cnn_units=3,
         text_feature_extractor=['cnn_bi_lstm'],
         weight_decay=0.001,
-        weight_decay_fc=[0.001, 1e-4, 1e-5],
         image_feature_extractor='resnet101',
-#         mi_weight=[0.0, 0.2, 0.4, 0.6, 0.8, 0.9],
-#         mi_kernel_width=[0.001, 0.01, 0.1],
-#         mi_train_offset=0.0,
-#         consistency_loss=["SOM", "NMSE", "MI"], # ["CLASSIFIER", "SOM"],
-#         cross_class_decay=[0.8, 0.9, 0.95],
-#         cross_class_num_clusters=[1024],
+        modality_interaction=["None", "FILM"],
+        film_weight_decay_postmult=[1.0, 0.1, 1e-2, 1e-4],
     )
 
     parser = argparse.ArgumentParser()
