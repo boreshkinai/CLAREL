@@ -45,12 +45,12 @@ def get_arguments():
                         help='Split of the data to be used to perform operation.')
     parser.add_argument('--test_split', type=str, default='test', choices=['test', 'val'],
                         help='Split of the data to be used to perform operation.')
-    parser.add_argument('--dataset', type=str, default='xian2018_flowers',
+    parser.add_argument('--dataset', type=str, default='xian2017_cub',
                         choices=['cvpr2016_cub', 'xian2017_cub', 'xian2018_flowers'], help='Dataset to train.')
 
     # Training parameters
     parser.add_argument('--repeat', type=int, default=0)
-    parser.add_argument('--number_of_steps', type=int, default=int(100000),
+    parser.add_argument('--number_of_steps', type=int, default=int(100001),
                         help="Number of training steps (number of Epochs in Hugo's paper)")
     parser.add_argument('--number_of_steps_to_early_stop', type=int, default=int(1000000),
                         help="Number of training steps after half way to early stop the training")
@@ -89,7 +89,7 @@ def get_arguments():
                         default='./logs/batch_size-32-lr-0.122-lr_anneal-cos-epochs-100.0-dropout-1.0-optimizer-sgd-weight_decay-0.0005-augment-False-num_filters-64-feature_extractor-simple_res_net-task_encoder-class_mean-attention_num_filters-32/train',
                         help='Path to the pretrained model to run the nearest neigbor baseline test.')
     # Architecture parameters
-    parser.add_argument('--dropout', type=float, default=0.0)
+    parser.add_argument('--dropout', type=float, default=0.25)
     parser.add_argument('--weight_decay', type=float, default=0.001)
     parser.add_argument('--embedding_pooled', type=bool, default=True)
     # Image feature extractor
@@ -110,7 +110,7 @@ def get_arguments():
     parser.add_argument('--vocab_size', type=int, default=10000)
     parser.add_argument('--text_feature_extractor', type=str, default='cnn_bi_lstm',
                         choices=['simple_bi_lstm', 'cnn_bi_lstm', '2016cnn_bi_lstm'])
-    parser.add_argument('--text_maxlen', type=int, default=100, help='Maximal length of the text description in tokens')
+    parser.add_argument('--text_maxlen', type=int, default=30, help='Maximal length of the text description in tokens')
     parser.add_argument('--shuffle_text_in_batch', type=bool, default=False)
     parser.add_argument('--rnn_size', type=int, default=512)
     parser.add_argument('--num_text_cnn_filt', type=int, default=256)
@@ -128,7 +128,7 @@ def get_arguments():
                         help='multiplier of cosine metric trainability')
     parser.add_argument('--polynomial_metric_order', type=int, default=1)
     # Cross modal consistency loss
-    parser.add_argument('--mi_weight', type=float, default=0.0,
+    parser.add_argument('--mi_weight', type=float, default=None,
                         help='The weight of the mutual information term between text and image distances')
     parser.add_argument('--mi_kernel_width', type=float, default=1.0,
                         help='The width of KDE kernel used to estmiate MI')
@@ -142,6 +142,10 @@ def get_arguments():
     parser.add_argument('--cross_class_sigma_0', type=float, default=1.0)
     parser.add_argument('--num_classes_train', type=int, default=250)
     parser.add_argument('--weight_decay_fc', type=float, default=0.001)
+    
+    parser.add_argument('--modality_interaction', type=str, default="None", choices=["None", "FILM"])
+    parser.add_argument('--film_weight_decay', type=float, default=0.001)
+    parser.add_argument('--film_weight_decay_postmult', type=float, default=0.1)
     
 
 
@@ -224,6 +228,18 @@ class ScaledVarianceRandomNormal(init_ops.Initializer):
                                         dtype, seed=self.seed)
 
 
+def _get_film_fc_scope(is_training, flags):
+    scope = slim.arg_scope(
+        [slim.fully_connected],
+        activation_fn=ACTIVATION_MAP[flags.activation],
+        normalizer_fn=None,
+        trainable=True,
+        weights_regularizer=tf.contrib.layers.l2_regularizer(scale=flags.film_weight_decay),
+        weights_initializer=ScaledVarianceRandomNormal(factor=flags.weights_initializer_factor),
+    )
+    return scope
+    
+    
 def _get_fc_scope(is_training, flags):
     scope = slim.arg_scope(
         [slim.fully_connected],
@@ -264,7 +280,6 @@ def _get_scope(is_training, flags):
         activation_fn=ACTIVATION_MAP[flags.activation],
         normalizer_fn=tf.contrib.layers.batch_norm,
         normalizer_params=normalizer_params,
-        # padding='SAME',
         trainable=True,
         weights_regularizer=tf.contrib.layers.l2_regularizer(scale=flags.weight_decay),
         weights_initializer=ScaledVarianceRandomNormal(factor=flags.weights_initializer_factor),
@@ -392,9 +407,6 @@ def get_image_feature_extractor(images: tf.Tensor, flags, is_training=False, sco
 
     h = tf.reduce_mean(h, axis=1, keepdims=False)
     
-    with _get_fc_scope(is_training, flags):
-        shortcut = slim.fully_connected(h, num_outputs=flags.embedding_size, scope='image_shortcut')
-                
     h = get_encoder(h, flags=flags, is_training=is_training, scope="image_encoder")
     
     conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
@@ -402,9 +414,7 @@ def get_image_feature_extractor(images: tf.Tensor, flags, is_training=False, sco
         if flags.dropout:
             h = slim.dropout(h, scope='image_dropout', keep_prob=1.0 - flags.dropout)
             
-    h = get_decoder(h, flags=flags, is_training=is_training, scope="image_decoder")
-    h = tf.nn.relu(shortcut + h)
-            
+    h = get_decoder(h, flags=flags, is_training=is_training, scope="image_decoder")            
     return h
 
 
@@ -468,15 +478,6 @@ def get_2016cnn_bi_lstm(text, text_length, flags, embedding_initializer=None,
                                                maxlen=h.get_shape().as_list()[1], dtype=tf.float32), axis=-1)
         h = tf.reduce_sum(tf.multiply(h, mask), axis=[1]) / tf.reduce_sum(mask, axis=[1])
         
-#         h = get_encoder(h, flags=flags, is_training=is_training, scope="text_encoder")
-        
-#         conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
-#         with conv2d_arg_scope, dropout_arg_scope:
-#             if flags.dropout:
-#                 h = slim.dropout(h, scope='text_dropout', keep_prob=1.0 - flags.dropout)
-
-#         h = get_decoder(h, flags=flags, is_training=is_training, scope="text_decoder")
-        
     return h
 
 
@@ -538,18 +539,6 @@ def get_cnn_bi_lstm(text, text_length, flags, embedding_initializer=None,
                                                maxlen=h.get_shape().as_list()[1], dtype=tf.float32), axis=-1)
         h = tf.reduce_sum(tf.multiply(h, mask), axis=[1]) / tf.reduce_sum(mask, axis=[1])
         
-#         conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
-#         with conv2d_arg_scope, dropout_arg_scope:
-#             if flags.dropout:
-#                 h = slim.dropout(h, 
-#                                  scope=scope+'/text_dropout', keep_prob=1.0 - flags.dropout)
-
-#         # Bottleneck layer
-#         if flags.embedding_size:
-#             with _get_fc_scope(is_training, flags):
-#                 h = slim.fully_connected(h, num_outputs=flags.embedding_size, 
-#                                          scope=scope+'/text_feature_adaptor')
-
     return h
 
 
@@ -595,17 +584,6 @@ def get_simple_bi_lstm(text, text_length, flags, embedding_initializer=None,
                                                                sequence_length=text_length)
         mask = tf.expand_dims(tf.sequence_mask(text_length, maxlen=tf.shape(text)[1], dtype=tf.float32), axis=-1)
         h = tf.reduce_sum(tf.multiply(h, mask), axis=[1]) / tf.reduce_sum(mask, axis=[1])
-
-#         conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
-#         activation_fn = ACTIVATION_MAP[flags.activation]
-#         with conv2d_arg_scope, dropout_arg_scope:
-#             if flags.dropout:
-#                 h = slim.dropout(h, scope='text_dropout', keep_prob=1.0 - flags.dropout)
-
-#         # Bottleneck layer
-#         if flags.embedding_size:
-#             with _get_fc_scope(is_training, flags):
-#                 h = slim.fully_connected(h, num_outputs=flags.embedding_size, scope='text_feature_adaptor')
                 
     return h
 
@@ -641,9 +619,6 @@ def get_text_feature_extractor(text, text_length, flags, embedding_initializer=N
                             embedding_initializer=embedding_initializer, is_training=is_training,
                             reuse=reuse, scope=scope)
     
-    with _get_fc_scope(is_training, flags):
-        shortcut = slim.fully_connected(h, num_outputs=flags.embedding_size, scope='text_shortcut')
-        
     h = get_encoder(h, flags=flags, is_training=is_training, scope="text_encoder")
         
     conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
@@ -652,8 +627,7 @@ def get_text_feature_extractor(text, text_length, flags, embedding_initializer=N
             h = slim.dropout(h, scope='text_dropout', keep_prob=1.0 - flags.dropout)
 
     h = get_decoder(h, flags=flags, is_training=is_training, scope="text_decoder")
-    h = tf.nn.relu(h + shortcut)
-
+    
     if len(original_shape) == 3:
         h = tf.reshape(h, shape=([-1] + [original_shape[1], h.get_shape().as_list()[-1]]))
         h = tf.reduce_mean(h, axis=1, keepdims=False)
@@ -689,6 +663,57 @@ def get_distance_head(embedding_mod1, embedding_mod2, flags, is_training, scope=
         return euclidian
 
 
+def get_film_layer(h, condition, flags, is_training, scope="film_layer", reuse=tf.AUTO_REUSE):
+    """
+    :param h: input layer
+    :return: conditional batch norm in the form (gamma + 1.0) * h + beta
+    """
+    activation_fn=ACTIVATION_MAP[flags.activation]
+    with tf.variable_scope(scope, reuse=reuse):
+        beta_postmultiplier = tf.get_variable(name='beta_postmultiplier', dtype=tf.float32, initializer=0.0,
+                                              trainable=True,
+                                              regularizer=tf.contrib.layers.l2_regularizer(
+                                                  scale=flags.film_weight_decay_postmult,
+                                                  scope='penalize_beta'))
+        gamma_postmultiplier = tf.get_variable(name='gamma_postmultiplier', dtype=tf.float32, initializer=0.0,
+                                               trainable=True,
+                                               regularizer=tf.contrib.layers.l2_regularizer(
+                                                   scale=flags.film_weight_decay_postmult,
+                                                   scope='penalize_gamma'))
+        with _get_film_fc_scope(is_training, flags):
+            num_filters = h.shape.as_list()[-1]
+            beta = slim.fully_connected(condition, num_outputs=num_filters, activation_fn=None, scope='beta')
+            gamma = slim.fully_connected(condition, num_outputs=num_filters, activation_fn=None, scope='gamma')
+
+        beta = tf.multiply(beta_postmultiplier, beta, name='postmultiply_beta')
+        gamma = 1.0 + tf.multiply(gamma_postmultiplier, gamma, name='postmultiply_gamma')
+        
+        tf.summary.scalar('beta_weight', beta_postmultiplier)
+        tf.summary.scalar('gamma_weight', gamma_postmultiplier)
+            
+        # h[:,:,None] - Bh x F x 1
+        # tf.transpose(gamma) - F x Bc
+        # h[:,:,None] * tf.transpose(gamma) - Bh x F x Bc
+        # tf.transpose(beta)[None, :, :] - 1 x F x Bc
+        # output Bh x F x Bc
+        interaction = h[:,:,None] * tf.transpose(gamma) + tf.transpose(beta)[None, :, :]        
+        return activation_fn(interaction)
+
+
+def get_film_interactor(embedding_mod1, embedding_mod2, flags, is_training, scope='film_interactor', reuse=tf.AUTO_REUSE):
+    with tf.variable_scope(scope, reuse=reuse):
+        with _get_fc_scope(is_training, flags):
+            embedding_mod1_film = get_film_layer(embedding_mod1, embedding_mod2, flags=flags, 
+                                                 is_training=is_training, scope="film_layer_1_to_2", reuse=reuse)
+            embedding_mod2_film = get_film_layer(embedding_mod2, embedding_mod1, flags=flags, 
+                                                 is_training=is_training, scope="film_layer_2_to_1", reuse=reuse)
+            # mod1 embedding has size B1 x F x B2
+            # mod1 embedding has size B2 x F x B1
+            # This will align the modalities such that both of them have size B1 x F x B2
+            embedding_mod2_film = tf.transpose(embedding_mod2_film, perm=[2, 1, 0])
+            return embedding_mod1_film, embedding_mod2_film
+
+
 def get_inference_graph(images, text, text_length, flags, is_training, embedding_initializer=None, reuse=False):
     """
         Creates text embedding, image embedding and links them using a distance metric.
@@ -702,14 +727,21 @@ def get_inference_graph(images, text, text_length, flags, is_training, embedding
     :return:
     """
     image_embeddings, text_embeddings = get_embeddings(images, text, text_length,
-                                                           flags=flags, is_training=is_training,
-                                                           embedding_initializer=embedding_initializer, reuse=reuse)
+                                                       flags=flags, is_training=is_training,
+                                                       embedding_initializer=embedding_initializer, reuse=reuse)
+    
     with tf.variable_scope('Metric', reuse=reuse):
         # Here we compute logits of correctly matching text to a given image.
         # We could also compute logits of correctly matching an image to a given text by reversing
         # image_embeddings and text_embeddings
-        logits = get_distance_head(embedding_mod1=image_embeddings, embedding_mod2=text_embeddings,
-                                   flags=flags, is_training=is_training, scope='distance_head')
+        if flags.modality_interaction == "FILM":
+            image_embeddings_film, text_embeddings_film = get_film_interactor(image_embeddings, text_embeddings, 
+                                                                    flags=flags, is_training=is_training,
+                                                                    scope='film_interactor', reuse=reuse)
+            logits = -tf.norm(image_embeddings_film - text_embeddings_film, name='neg_euclidian_distance', axis=-2)
+        else:
+            logits = get_distance_head(embedding_mod1=image_embeddings, embedding_mod2=text_embeddings,
+                                       flags=flags, is_training=is_training, scope='distance_head')
     return logits, image_embeddings, text_embeddings
 
 
@@ -939,16 +971,15 @@ class ModelLoader:
         logging.info("Computing test embeddings")
         image_embeddings_test, text_embeddings_test = self.predict_all(test_loader, batch_size)
         
-#         logging.info("Computing classical zero-shot performance metrics, test")
-#         metrics_test = ap_at_k_prototypes(support_embeddings=text_embeddings_test, 
-#                                      query_embeddings=image_embeddings_test,
-#                                      class_ids=test_loader.image_classes, k=50, num_texts=[1, 5, 10, 20, 40, 100])
-#         logging.info("Computing classical zero-shot performance metrics, train")
-#         metrics_train = ap_at_k_prototypes(support_embeddings=text_embeddings_train, 
-#                                      query_embeddings=image_embeddings_train,
-#                                      class_ids=train_loader.image_classes, k=50, num_texts=[1, 5, 10, 20, 40, 100])
-        metrics_test={}
-        metrics_train={}
+        logging.info("Computing classical zero-shot performance metrics, test")
+        metrics_test = ap_at_k_prototypes(support_embeddings=text_embeddings_test, 
+                                     query_embeddings=image_embeddings_test,
+                                     class_ids=test_loader.image_classes, k=50, num_texts=[1, 5, 10, 20, 40, 100])
+        logging.info("Computing classical zero-shot performance metrics, train")
+        metrics_train = ap_at_k_prototypes(support_embeddings=text_embeddings_train, 
+                                     query_embeddings=image_embeddings_train,
+                                     class_ids=train_loader.image_classes, k=50, num_texts=[1, 5, 10, 20, 40, 100])
+        
         logging.info("Computing generalized zero-shot performance metrics")
         seen_unseen_text_embeddings = np.concatenate([text_embeddings_train, text_embeddings_test], axis=0)
         seen_unseen_classes = np.concatenate([train_loader.image_classes, test_loader.image_classes], axis=0)
@@ -1163,7 +1194,7 @@ def train(flags):
 
                     labels_txt2img, labels_img2txt = match_labels
                     dt_batch = time.time() - dt_batch
-
+                    
                     feed_dict = {images_pl: images.astype(dtype=np.float32), text_len_pl: text_length,
                                  text_pl: text,
                                  match_labels_txt2img_pl: labels_txt2img, match_labels_img2txt_pl: labels_img2txt,
@@ -1192,11 +1223,12 @@ def train(flags):
                     t_train = time.time()
                     loss_tot = sess.run(main_train_op, feed_dict=feed_dict)
                     dt_train = time.time() - t_train
+                    
 
                     if step % flags.eval_interval_steps == 0:
                         saver.save(sess, os.path.join(log_dir, 'model'), global_step=step)
                         eval_acc_batch(flags, datasets=dataset_splits)
-                        eval_acc(flags, datasets=dataset_splits)
+#                         eval_acc(flags, datasets=dataset_splits)
 
 
 def test():
