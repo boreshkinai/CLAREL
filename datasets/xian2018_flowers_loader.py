@@ -163,7 +163,7 @@ class Xian2018FlowersLoader(Dataset):
         for image_file_name, image_class in tqdm(zip(self.image_file_names, self.image_classes_txt)):
             raw_text_lines = self._load_texts_of_an_imange(image_class, image_file_name)
             tokenized_text_lines = self.tokenizer.texts_to_sequences(raw_text_lines)
-            tokenized_text_lengths = [min(len(x), self.max_text_len) for x in tokenized_text_lines]
+            tokenized_text_lengths = [min(max(len(x), 1), self.max_text_len) for x in tokenized_text_lines]
             tokenized_text_lines = pad_sequences(tokenized_text_lines, maxlen=self.max_text_len, padding='post')
             self.raw_texts.append(raw_text_lines)
             self.tokenized_texts.append(tokenized_text_lines)
