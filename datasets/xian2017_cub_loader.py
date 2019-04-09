@@ -26,7 +26,7 @@ class Xian2017CubLoader(Dataset):
     def __init__(self, data_dir: str = DEFAULT_DIR, cub_dir: str = DEFAULT_CUB_DIR, split: str = "train",
                  img_target_size: int = 299, img_border_size: int = 16, max_text_len: int = 30,
                  vocab_size: int = 10000, word_embed_dir=DEFAULT_WORD2VEC_DIR, word_embed_file=FILE_NAME_WORD2VEC,
-                 image_model='inception_v2', fold=''):
+                 image_model='inception_v2', fold='', shuffle_text_in_batch=True):
         """
 
         :param data_dir: data in which the main dataset is stored
@@ -49,6 +49,7 @@ class Xian2017CubLoader(Dataset):
         self.word_embed_file = word_embed_file
         self.image_model = image_model
         self.fold = fold
+        self.shuffle_text_in_batch = shuffle_text_in_batch
         self.crop_options = [self._crop_center, self._crop_bottom_left,
                              self._crop_bottom_right, self._crop_top_left, self._crop_top_right]
 
@@ -219,29 +220,6 @@ class Xian2017CubLoader(Dataset):
         assert len(text_lines) == 10
         return text_lines
 
-#     def next_batch(self, batch_size: int = 64, num_images: int = 2, num_texts: int = 5):
-#         """
-
-#         :param batch_size: number of text/image pairs in the batch
-#         :param num_images: number of images sampled per pair
-#         :param num_texts: number of texts per pair
-#         :return:
-#         """
-#         idxs = np.arange(len(self.raw_images))
-#         batch_idxs = np.random.choice(idxs, size=batch_size, replace=False)
-#         batch_images = []
-#         batch_texts = []
-#         batch_text_lengths = []
-#         for idx in batch_idxs:
-#             batch_images.append(self._sample_images(idx, num_images=num_images))
-#             texts, text_lengths = self._sample_texts(idx, num_texts=num_texts)
-#             batch_texts.append(texts)
-#             batch_text_lengths.append(text_lengths)
-#         labels_txt2img = np.arange(batch_size, dtype=np.int32)
-#         labels_img2txt = np.arange(batch_size, dtype=np.int32)
-#         return np.array(batch_images), np.array(batch_texts), np.array(batch_text_lengths), \
-#                (labels_txt2img, labels_img2txt)
-
     def next_batch_features(self, batch_size: int = 64, num_images: int = 2, num_texts: int = 5):
         """
         :param batch_size: number of text/image pairs in the batch
@@ -261,9 +239,18 @@ class Xian2017CubLoader(Dataset):
             batch_texts.append(texts)
             batch_text_lengths.append(text_lengths)
             class_labels[i] = int(self.image_classes[idx])
+        
+        # Shuffling the text to avoid having a trivial relation between image indexes and text indexes
         labels_txt2img = np.arange(batch_size, dtype=np.int32)
-        labels_img2txt = np.arange(batch_size, dtype=np.int32)
-        return np.array(batch_features), np.array(batch_texts), np.array(batch_text_lengths), \
+        permutation = np.arange(batch_size, dtype=np.int32)
+        
+        if self.shuffle_text_in_batch:
+            permutation = np.random.choice(np.arange(batch_size, dtype=np.int32), size=batch_size, replace=False)
+            for i in range(batch_size):
+                labels_txt2img[permutation[i]] = i
+        labels_img2txt = permutation
+        
+        return np.array(batch_features), np.array(batch_texts)[permutation], np.array(batch_text_lengths)[permutation], \
                (labels_txt2img, labels_img2txt), class_labels
 
 #     def _sample_images(self, idx: int, num_images: int):
