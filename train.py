@@ -714,6 +714,22 @@ def get_film_interactor(embedding_mod1, embedding_mod2, flags, is_training, scop
             return embedding_mod1_film, embedding_mod2_film
 
 
+def get_metric(image_embeddings, text_embeddings, flags, is_training, reuse=False):
+    with tf.variable_scope('Metric', reuse=reuse):
+        # Here we compute logits of correctly matching text to a given image.
+        # We could also compute logits of correctly matching an image to a given text by reversing
+        # image_embeddings and text_embeddings
+        if flags.modality_interaction == "FILM":
+            image_embeddings_film, text_embeddings_film = get_film_interactor(image_embeddings, text_embeddings,
+                                                                    flags=flags, is_training=is_training,
+                                                                    scope='film_interactor', reuse=reuse)
+            logits = -tf.norm(image_embeddings_film - text_embeddings_film, name='neg_euclidian_distance', axis=-2)
+        else:
+            logits = get_distance_head(embedding_mod1=image_embeddings, embedding_mod2=text_embeddings,
+                                       flags=flags, is_training=is_training, scope='distance_head')
+    return logits
+
+
 def get_inference_graph(images, text, text_length, flags, is_training, embedding_initializer=None, reuse=False):
     """
         Creates text embedding, image embedding and links them using a distance metric.
@@ -729,19 +745,9 @@ def get_inference_graph(images, text, text_length, flags, is_training, embedding
     image_embeddings, text_embeddings = get_embeddings(images, text, text_length,
                                                        flags=flags, is_training=is_training,
                                                        embedding_initializer=embedding_initializer, reuse=reuse)
-    
-    with tf.variable_scope('Metric', reuse=reuse):
-        # Here we compute logits of correctly matching text to a given image.
-        # We could also compute logits of correctly matching an image to a given text by reversing
-        # image_embeddings and text_embeddings
-        if flags.modality_interaction == "FILM":
-            image_embeddings_film, text_embeddings_film = get_film_interactor(image_embeddings, text_embeddings, 
-                                                                    flags=flags, is_training=is_training,
-                                                                    scope='film_interactor', reuse=reuse)
-            logits = -tf.norm(image_embeddings_film - text_embeddings_film, name='neg_euclidian_distance', axis=-2)
-        else:
-            logits = get_distance_head(embedding_mod1=image_embeddings, embedding_mod2=text_embeddings,
-                                       flags=flags, is_training=is_training, scope='distance_head')
+    logits = get_metric(image_embeddings, text_embeddings,
+                        flags=flags, is_training=is_training, reuse=reuse)
+
     return logits, image_embeddings, text_embeddings
 
 
@@ -756,8 +762,9 @@ def get_embeddings(images, text, text_length, flags, is_training, embedding_init
     return image_embeddings, text_embeddings
 
 
-def get_input_placeholders(batch_size: int, image_size: int, num_images: int, num_texts: int,
-                           max_text_len: int, flags: Namespace, scope: str):
+def get_input_placeholders(batch_size_image: int = 32, batch_size_text: int = None,
+                           image_size: int = 299, num_images: int = 10, num_texts: int = 10,
+                           max_text_len: int = 30, flags: Namespace = None, scope: str = "input"):
     """
     :param image_size:
     :param num_images:
@@ -765,18 +772,22 @@ def get_input_placeholders(batch_size: int, image_size: int, num_images: int, nu
     :param max_text_len:
     :param scope:
     :return:
-    :param batch_size:
+    :param batch_size_image: the number of image instances (image instance features) in the batch
+    :param batch_size_text: the number of text instances (text instance features or prototypes) in the batch
     :return: placeholders for images, text and class labels
     """
+    if batch_size_text is None:
+        batch_size_text = batch_size_image
+
     with tf.variable_scope(scope):
-        images_placeholder = get_images_placeholder(batch_size=batch_size, num_images=num_images,
+        images_placeholder = get_images_placeholder(batch_size=batch_size_image, num_images=num_images,
                                                     image_size=image_size, flags=flags)
-        text_placeholder = tf.placeholder(shape=(batch_size, num_texts, max_text_len), name='text', dtype=tf.int32)
-        text_length_placeholder = tf.placeholder(shape=(batch_size, num_texts), name='text_len', dtype=tf.int32)
-        labels_txt2img = tf.placeholder(tf.int64, shape=(batch_size, ), name='match_labels_txt2img')
-        labels_img2txt = tf.placeholder(tf.int64, shape=(batch_size, ), name='match_labels_img2txt')
+        text_placeholder = tf.placeholder(shape=(batch_size_text, num_texts, max_text_len), name='text', dtype=tf.int32)
+        text_length_placeholder = tf.placeholder(shape=(batch_size_text, num_texts), name='text_len', dtype=tf.int32)
+        labels_txt2img = tf.placeholder(tf.int64, shape=(batch_size_text,), name='match_labels_txt2img')
+        labels_img2txt = tf.placeholder(tf.int64, shape=(batch_size_image,), name='match_labels_img2txt')
         if flags.consistency_loss == "CLASSIFIER":
-            labels_class = tf.placeholder(tf.int64, shape=(batch_size, ), name='class_labels')
+            labels_class = tf.placeholder(tf.int64, shape=(batch_size_image,), name='class_labels')
         else:
             labels_class = None
         
@@ -845,6 +856,46 @@ def get_main_train_op(loss: tf.Tensor, global_step: tf.Variable, flags: Namespac
                                          variables_to_train=variables_to_train)
 
 
+class NnModelLoader:
+    def __init__(self, model_path, batch_size_image, batch_size_text, num_images, num_texts, max_text_len):
+        self.batch_size_image = batch_size_image
+        self.batch_size_text = batch_size_text
+        self.num_images = num_images
+        self.num_texts = num_texts
+        self.max_text_len = max_text_len
+
+        latest_checkpoint = tf.train.latest_checkpoint(checkpoint_dir=os.path.join(model_path, 'train'))
+        self.step = int(os.path.basename(latest_checkpoint).split('-')[1])
+
+        flags = Namespace(load_and_save_params(default_params=dict(), exp_dir=model_path))
+        self.flags=flags
+
+        with tf.Graph().as_default():
+            self.get_input_placeholders()
+
+            self.logits = get_metric(self.image_embeddings, self.text_embeddings,
+                                     flags=self.flags, is_training=False, reuse=False)
+
+            print('Loading model')
+            init_fn = slim.assign_from_checkpoint_fn(latest_checkpoint, tf.global_variables())
+
+            config = tf.ConfigProto(allow_soft_placement=True)
+            config.gpu_options.allow_growth = True
+            self.sess = tf.Session(config=config)
+
+            # Run init before loading the weights
+            self.sess.run(tf.global_variables_initializer())
+            # Load weights
+            init_fn(self.sess)
+
+    def get_input_placeholders(self):
+        with tf.variable_scope("input"):
+            self.image_embeddings = tf.placeholder(shape=(self.batch_size_image, self.flags.embedding_size),
+                                                   name='image_features', dtype=tf.int32)
+            self.image_embeddings = tf.placeholder(shape=(self.batch_size_text, self.flags.embedding_size),
+                                                   name='text_features', dtype=tf.int32)
+
+
 class ModelLoader:
     def __init__(self, model_path, batch_size, num_images, num_texts, max_text_len):
         self.batch_size = batch_size
@@ -860,7 +911,7 @@ class ModelLoader:
 
         with tf.Graph().as_default():
             images_pl, text_pl, text_len_pl, match_labels_txt2img, match_labels_img2txt, _ = get_input_placeholders(
-                batch_size=batch_size, num_images=num_images, num_texts=num_texts, max_text_len=max_text_len,
+                batch_size_image=batch_size, num_images=num_images, num_texts=num_texts, max_text_len=max_text_len,
                 image_size=image_size, flags=flags, scope='inputs')
             if batch_size:
                 logits, image_embeddings, text_embeddings = get_inference_graph(
@@ -1119,7 +1170,7 @@ def train(flags):
         global_step = tf.Variable(0, trainable=False, name='global_step', dtype=tf.int64)
         is_training = tf.Variable(True, trainable=False, name='is_training', dtype=tf.bool)
         images_pl, text_pl, text_len_pl, match_labels_txt2img_pl, match_labels_img2txt_pl, labels_class = \
-            get_input_placeholders(batch_size=flags.train_batch_size,
+            get_input_placeholders(batch_size_image=flags.train_batch_size,
                                    num_images=flags.num_images, num_texts=flags.num_texts,
                                    image_size=image_size, max_text_len=max_text_len,
                                    flags=flags, scope='inputs')
