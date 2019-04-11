@@ -857,12 +857,9 @@ def get_main_train_op(loss: tf.Tensor, global_step: tf.Variable, flags: Namespac
 
 
 class NnModelLoader:
-    def __init__(self, model_path, batch_size_image, batch_size_text, num_images, num_texts, max_text_len):
+    def __init__(self, model_path, batch_size_image, batch_size_text):
         self.batch_size_image = batch_size_image
         self.batch_size_text = batch_size_text
-        self.num_images = num_images
-        self.num_texts = num_texts
-        self.max_text_len = max_text_len
 
         latest_checkpoint = tf.train.latest_checkpoint(checkpoint_dir=os.path.join(model_path, 'train'))
         self.step = int(os.path.basename(latest_checkpoint).split('-')[1])
@@ -871,29 +868,50 @@ class NnModelLoader:
         self.flags=flags
 
         with tf.Graph().as_default():
-            self.get_input_placeholders()
+            self.get_metric_input_placeholders()
 
             self.logits = get_metric(self.image_embeddings, self.text_embeddings,
                                      flags=self.flags, is_training=False, reuse=False)
-
-            print('Loading model')
-            init_fn = slim.assign_from_checkpoint_fn(latest_checkpoint, tf.global_variables())
-
+            
             config = tf.ConfigProto(allow_soft_placement=True)
             config.gpu_options.allow_growth = True
             self.sess = tf.Session(config=config)
 
-            # Run init before loading the weights
-            self.sess.run(tf.global_variables_initializer())
-            # Load weights
-            init_fn(self.sess)
+            print('Loading model')
+            global_vars = tf.global_variables()
+            if len(global_vars) > 0:
+                init_fn = slim.assign_from_checkpoint_fn(latest_checkpoint, global_vars)
+                # Run init before loading the weights
+                self.sess.run(tf.global_variables_initializer())
+                # Load weights
+                init_fn(self.sess)
 
-    def get_input_placeholders(self):
+    def get_metric_input_placeholders(self):
         with tf.variable_scope("input"):
             self.image_embeddings = tf.placeholder(shape=(self.batch_size_image, self.flags.embedding_size),
-                                                   name='image_features', dtype=tf.int32)
-            self.image_embeddings = tf.placeholder(shape=(self.batch_size_text, self.flags.embedding_size),
-                                                   name='text_features', dtype=tf.int32)
+                                                   name='image_embeddings', dtype=tf.float32)
+            self.text_embeddings = tf.placeholder(shape=(self.batch_size_text, self.flags.embedding_size),
+                                                   name='text_embeddings', dtype=tf.float32)
+            
+    def predict_batch(self, image_embeddings, text_embeddings):
+        feed_dict = {self.image_embeddings: image_embeddings.astype(dtype=np.float32),
+                     self.text_embeddings: text_embeddings.astype(dtype=np.float32)}
+        return self.sess.run(self.logits, feed_dict)
+    
+    def predict_all(self, image_embeddings, text_embeddings):
+        dist = np.zeros(shape=(image_embeddings.shape[0], text_embeddings.shape[0]))
+        num_batches = int(np.ceil(len(image_embeddings) / self.batch_size_image))
+        for i in range(num_batches):
+            image_embeddings_batch = image_embeddings[i * self.batch_size_image:(i + 1) * self.batch_size_image]
+            valid_length = len(image_embeddings_batch)
+            if valid_length < self.batch_size_image:
+                zeros = np.zeros(shape=(self.batch_size_image-valid_length, image_embeddings.shape[1]))
+                image_embeddings_batch = np.concatenate([image_embeddings_batch, zeros], axis=0)
+            
+            prediction = self.predict_batch(image_embeddings_batch, text_embeddings)
+            dist[i * self.batch_size_image:(i + 1) * self.batch_size_image] = prediction[:valid_length]
+            
+        return dist
 
 
 class ModelLoader:
