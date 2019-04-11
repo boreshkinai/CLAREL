@@ -43,13 +43,27 @@ def get_prototypes(embeddings, labels, vectors_per_protype):
         prototype_embeddings = embeddings[class_idxs_protype]
         prototypes[cl] = prototype_embeddings.mean(axis=0)
     return prototypes
-
-
+    
+    
+def ap_at_k(labels, predictions, k):
+    assert len(labels) == len(predictions)
+    # Measure the retrieval AP@50
+    ap50matches = {}
+    ap50counts = {}
+    ap50 = {}
+    for idx, label in enumerate(labels):
+        nearest_classes_query = predictions[idx][:k]
+        ap50matches[label] = ap50matches.get(label, 0.0) + sum(
+            [c == label for c in nearest_classes_query])
+        ap50counts[label] = ap50counts.get(label, 0.0) + k
+    for key in ap50matches.keys():
+        ap50[key] = ap50matches[key] / ap50counts[key]
+    return np.array(list(ap50.values())).mean()
+    
+    
 def ap_at_k_prototypes(support_embeddings, query_embeddings, class_ids, k=50, 
                        num_texts=[1, 2, 3, 5, 10, 20, 50], distance_metric_prototypes=None):
     class_ids = np.array(class_ids)
-    print("Compute KD-tree")
-    kdtree_query = cKDTree(query_embeddings, balanced_tree=False, compact_nodes=False)
     metrics = {}
     for current_num_texts in num_texts:
         prototypes = get_prototypes(embeddings=support_embeddings, labels=class_ids, 
@@ -66,22 +80,12 @@ def ap_at_k_prototypes(support_embeddings, query_embeddings, class_ids, k=50,
         nn_idxs = np.argmin(dist, axis=0)
         top1_acc = per_class_average_top1_acc(labels=class_ids, predictions=class_ids_support[nn_idxs])
         
-        # Measure the retrieval AP@50
-        ap50matches = {}
-        ap50counts = {}
-        ap50 = {}
-        for class_id_support in tqdm(class_ids_support):
-            nns, nn_idxs = kdtree_query.query(prototypes[class_id_support], k=k)
-            nearest_classes_query = class_ids[nn_idxs]
-            ap50matches[class_id_support] = ap50matches.get(class_id_support, 0.0) + sum(
-                [c == class_id_support for c in nearest_classes_query])
-            ap50counts[class_id_support] = ap50counts.get(class_id_support, 0.0) + k
-        for key in ap50matches.keys():
-            ap50[key] = ap50matches[key] / ap50counts[key]
+        nearest_image_idxs = np.argsort(dist, axis=1)
+        nearest_image_classes = class_ids[nearest_image_idxs]
+        ap50_val = ap_at_k(labels=class_ids_support, predictions=nearest_image_classes, k=k)
 
-        metrics['AP@%d/#sentences%d'%(k, 10*current_num_texts)] = np.array(list(ap50.values())).mean()
+        metrics['AP@%d/#sentences%d'%(k, 10*current_num_texts)] = ap50_val
         metrics['Top-1 Acc/#sentences%d'%(10*current_num_texts)] = top1_acc
-    
     return metrics
 
 def per_class_average_top1_acc(labels, predictions):
