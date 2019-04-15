@@ -121,12 +121,12 @@ def get_classifier_loss(features_modality1, features_modality2, labels, flags, s
         samples = tf.concat([features_modality1, features_modality2, 0.5*(features_modality1+features_modality2)], axis=0)
         labels = tf.concat([labels, labels, labels], axis=0)
         
-        h = slim.fully_connected(samples, num_outputs=flags.cross_class_num_clusters, activation_fn=tf.nn.relu, 
-                                 normalizer_fn=None, trainable=True, 
-                                 weights_regularizer=tf.contrib.layers.l2_regularizer(scale=flags.weight_decay), 
-                                 scope='classifier_hidden')
+#         h = slim.fully_connected(samples, num_outputs=flags.cross_class_num_clusters, activation_fn=tf.nn.relu, 
+#                                  normalizer_fn=None, trainable=True, 
+#                                  weights_regularizer=tf.contrib.layers.l2_regularizer(scale=flags.weight_decay), 
+#                                  scope='classifier_hidden')
         
-        logits = slim.fully_connected(h, num_outputs=flags.num_classes_train, activation_fn=None, 
+        logits = slim.fully_connected(samples, num_outputs=flags.num_classes_train, activation_fn=None, 
                                       normalizer_fn=None, trainable=True, weights_regularizer=None, 
                                       scope='classifier_fc')
         loss = tf.reduce_mean(
