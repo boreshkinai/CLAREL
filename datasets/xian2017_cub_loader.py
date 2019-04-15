@@ -58,7 +58,6 @@ class Xian2017CubLoader(Dataset):
         self._load_image_meta()
         self._load_tokenized_text()
         self._load_text_embeddings()
-#         self._load_raw_images()
         self._load_image_features()
 
     def load_cached(self):
@@ -90,19 +89,6 @@ class Xian2017CubLoader(Dataset):
             features = np.tile(features, (10, 1))
             image_embeddings.append(features)
         self.image_embeddings = np.stack(image_embeddings)
-    
-#     def _extract_image_features(self):
-#         image_model = IMAGE_MODELS[self.image_model]()
-#         logging.info("Preprocessing images with a pretrained model...")
-#         image_embeddings = []
-#         for images, _, _ in tqdm(self.sequential_evaluation_batches(batch_size=10, num_images=10, num_texts=1)):
-#             shape_in = list(images.shape)
-#             images = np.reshape(images, newshape=([np.prod(shape_in[:2])] + shape_in[2:]))
-#             _, _, image_embeddings_batch = image_model.predict(images)
-#             image_embeddings_batch = np.reshape(image_embeddings_batch, newshape=(shape_in[:2] + [-1]))
-#             image_embeddings.append(image_embeddings_batch)
-
-#         self.image_embeddings = np.concatenate(image_embeddings)
 
     def _load_text_embeddings(self):
         logging.info("Loading word2vec embedding...")
@@ -125,20 +111,46 @@ class Xian2017CubLoader(Dataset):
                 self.word_vectors_dict[key] = np.zeros(shape=(word_embedding_model.vector_size,))
                 self.word_vectors_idx.append(np.zeros(shape=(word_embedding_model.vector_size,)))
 
-        print("Number of tokens not found in the embedding:", num_misses, 'out of', len(self.tokenizer.word_index))
+        logging.info("Number of tokens not found in the embedding: %d out of %d" %(num_misses, len(self.tokenizer.word_index)))
         self.word_vectors_idx = np.array(self.word_vectors_idx, dtype=np.float32)
 
     def _load_split_class_ids(self):
-        with open(os.path.join(self.xlsa17_dir, self.split + 'classes%s.txt' % self.fold), 'r') as f:
+        split_map = {"trainval": '%sclasses.txt' % "trainval", 
+                     "test_seen": '%sclasses.txt' % "trainval", 
+                     "test_unseen": '%sclasses.txt' % "test", 
+                     "train": '%sclasses1.txt' % "train", "val": '%sclasses1.txt' % "val",
+                     "all": "%sclasses.txt" % "all"}
+        with open(os.path.join(self.xlsa17_dir, split_map[self.split]), 'r') as f:
             split_classes = f.read().splitlines()
-        return [c.split(sep='.')[0] for c in split_classes]
+        self.split_class_ids = [c.split(sep='.')[0] for c in split_classes]
+        
+    def _load_seen_unseen(self):
+        split_map = {"trainval": "trainval_loc", 
+                     "test_seen": "test_seen_loc", 
+                     "test_unseen": "test_unseen_loc", 
+                     "train": "train_loc", "val": "val_loc"}
+        self.att_splits_matfile = scipy.io.loadmat(os.path.join(self.xlsa17_dir, "att_splits.mat"))
+        self.res101_matfile = scipy.io.loadmat(os.path.join(self.xlsa17_dir, "res101.mat"))
+        if self.split in split_map.keys():
+            # -1 to correct for the matlab based indexing
+            self.xlsa_split_image_idxs = self.att_splits_matfile[split_map[self.split]].ravel()-1
 
+            self.xlsa_split_image_names = self.res101_matfile['image_files'][self.xlsa_split_image_idxs].ravel()
+            self.xlsa_split_image_names = np.array([s[0].split('/')[-1].split('.')[0] for s in self.xlsa_split_image_names])
+        else:
+            self.xlsa_split_image_idxs = []
+            self.xlsa_split_image_names = []
+        
     def _load_image_meta(self):
+        # This is according to https://arxiv.org/pdf/1703.04394.pdf
+        number_of_images = {"trainval": 7057, "test_seen": 1764, "test_unseen": 2967, 
+                            "all": 11788, "train": 5875, "val": 2946}
         # Load image names
         with open(os.path.join(self.data_dir, self.cub_dir, 'images.txt'), 'r') as f:
             image_lines = f.read().splitlines()
         # Load train/val/test split file
-        split_class_ids = self._load_split_class_ids()
+        self._load_split_class_ids()
+        self._load_seen_unseen()
 
         self.image_ids = []
         self.image_paths = []
@@ -146,36 +158,33 @@ class Xian2017CubLoader(Dataset):
         self.image_classes = []
         self.image_file_names = []
         self.image_names = []
-        for line in image_lines:
+        for line in tqdm(image_lines):
             line_split = line.split(sep=' ')
             class_id = line_split[1].split(sep='/')[0].split(sep='.')[0]
-            if class_id in split_class_ids:
-                self.image_ids.append(int(line_split[0]))
-                self.image_paths.append(os.path.join(self.data_dir, self.cub_dir, 'images', line_split[1]))
+            if class_id in self.split_class_ids:
+                image_id = int(line_split[0])
+                image_path = os.path.join(self.data_dir, self.cub_dir, 'images', line_split[1])
                 line_split = line_split[1].split(sep='/')
-                self.image_classes_txt.append(line_split[0])
-                self.image_file_names.append(line_split[1])
-                self.image_classes.append(line_split[0].split(sep='.')[0])
-                self.image_names.append(line_split[1].split(sep='.')[0])
-
-        assert len(set(split_class_ids) - set(self.image_classes)) == 0
-        assert len(set(self.image_classes) - set(split_class_ids)) == 0
-
-#     def _load_raw_images(self) -> None:
-#         logging.info("Load raw image data for split %s" % self.split)
-#         self.raw_images = []
-
-#         for image_path in tqdm(self.image_paths):
-#             im = Image.open(image_path)
-#             # Handle non-RGB
-#             if len(np.array(im).shape) != 3:
-#                 im = im.convert('RGB')
-#             scale_factor = ((self.img_target_size + 2 * self.img_border_size) / min(im.size))
-#             im = im.resize((int(scale_factor * im.size[0]), int(scale_factor * im.size[1])), Image.ANTIALIAS)
-#             self.raw_images.append(im)
-
-#         self.crop_options = [self._crop_center, self._crop_bottom_left,
-#                              self._crop_bottom_right, self._crop_top_left, self._crop_top_right]
+                image_name = line_split[1].split(sep='.')[0]
+                
+                if np.isin(image_name, self.xlsa_split_image_names).item() or len(self.xlsa_split_image_names) == 0:
+                    self.image_ids.append(image_id)
+                    self.image_paths.append(image_path)
+                    self.image_classes_txt.append(line_split[0])
+                    self.image_file_names.append(line_split[1])
+                    self.image_classes.append(line_split[0].split(sep='.')[0])
+                    self.image_names.append(image_name)
+        
+#         print(len(self.image_names))
+#         print(set(self.split_class_ids))
+#         print(set(self.image_classes))
+        
+        assert len(set(self.split_class_ids) - set(self.image_classes)) == 0
+        assert len(set(self.image_classes) - set(self.split_class_ids)) == 0
+        if len(self.xlsa_split_image_names) > 0:
+            assert len(set(self.xlsa_split_image_names) - set(self.image_names)) == 0
+            assert len(set(self.image_names) - set(self.xlsa_split_image_names)) == 0
+        assert number_of_images[self.split] == len(self.image_names)
 
     def _load_tokenized_text(self):
         # # Load vocabulary
@@ -253,17 +262,6 @@ class Xian2017CubLoader(Dataset):
         return np.array(batch_features), np.array(batch_texts)[permutation], np.array(batch_text_lengths)[permutation], \
                (labels_txt2img, labels_img2txt), class_labels
 
-#     def _sample_images(self, idx: int, num_images: int):
-#         img_raw = self.raw_images[idx]
-#         images_batch = []
-#         for i in range(num_images):
-#             crop_idx = np.random.choice(np.arange(len(self.crop_options)), size=1, replace=False)[0]
-#             img = self.crop_options[crop_idx](img_raw)
-#             if np.random.uniform(size=1)[0] > 0.5:
-#                 img = img.transpose(Image.FLIP_LEFT_RIGHT)
-#             images_batch.append(np.array(img))
-#         return np.array(images_batch)
-
     def _sample_features(self, idx: int, num_images: int):
         img_embeddings = self.image_embeddings[idx]
         embeddings_batch = []
@@ -300,28 +298,6 @@ class Xian2017CubLoader(Dataset):
         sampled_idxs = np.random.choice(idxs, size=num_texts, replace=True)
         return texts[sampled_idxs], lengths[sampled_idxs]
 
-#     def sequential_evaluation_batches(self, batch_size: int = 64, num_images: int = 10, num_texts: int = 10):
-#         num_batches = int(np.ceil(len(self.raw_images) / batch_size))
-#         for i in range(num_batches):
-#             idx_max = min((i + 1) * batch_size, len(self.raw_images))
-#             if num_images == 10:
-#                 images = self.raw_images[i * batch_size:(i + 1) * batch_size]
-#                 images_out = [self.get_10_image_crops(image) for image in images]
-#             else:
-#                 images_out = [self._sample_images(idx, num_images) for idx in range(i * batch_size, idx_max)]
-
-#             if num_texts == 10:
-#                 texts_out = self.tokenized_texts[i * batch_size:(i + 1) * batch_size]
-#                 text_lengths_out = self.tokenized_text_lengths[i * batch_size:(i + 1) * batch_size]
-#             else:
-#                 texts_out, text_lengths_out = [], []
-#                 for idx in range(i * batch_size, idx_max):
-#                     texts, text_lengths = self._sample_texts(idx, num_texts)
-#                     texts_out.append(texts)
-#                     text_lengths_out.append(text_lengths)
-
-#             yield np.array(images_out), np.array(texts_out), np.array(text_lengths_out)
-
     def sequential_evaluation_batches_features(self, batch_size: int = 64, num_images: int = 10, num_texts: int = 10):
         num_batches = int(np.ceil(len(self.image_embeddings) / batch_size))
         for i in range(num_batches):
@@ -342,21 +318,4 @@ class Xian2017CubLoader(Dataset):
                     text_lengths_out.append(text_lengths)
 
             yield np.array(embeddings_out), np.array(texts_out), np.array(text_lengths_out)
-
-#     def get_10_image_crops(self, image):
-#         crop_options = [self._crop_center, self._crop_bottom_left, self._crop_bottom_right, self._crop_top_left,
-#                         self._crop_top_right]
-#         image_flip = image.transpose(Image.FLIP_LEFT_RIGHT)
-#         crops_out = []
-#         for crop in crop_options:
-#             crops_out.append(np.array(crop(image)))
-#             crops_out.append(np.array(crop(image_flip)))
-#         return np.array(crops_out)
-
-# loader = Cvpr2016CubLoader(data_dir='cvpr2016_cub', cub_dir=DEFAULT_CUB_DIR,
-#                            word_embed_dir='GoogleNews_vectors_negative300')
-# loader.load_cached()
-# loader.next_batch()
-# for batch in loader.sequential_evaluation_batches():
-#     a=1
-#     print(batch[0].shape)
+            
