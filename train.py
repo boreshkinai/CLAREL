@@ -41,6 +41,8 @@ def get_arguments():
                         choices=['train', 'eval', 'test'])
     # Dataset parameters
     parser.add_argument('--data_dir', type=str, default=None, help='Path to the data.')
+    parser.add_argument('--split_type', type=str, default='GZSL', choices=['ZSL', 'GZSL'],
+                        help='Type of the split based on https://arxiv.org/pdf/1703.04394.pdf.')
     parser.add_argument('--train_split', type=str, default='trainval', choices=['train', 'trainval'],
                         help='Split of the data to be used to perform operation.')
     parser.add_argument('--test_split', type=str, default='test', choices=['test', 'val'],
@@ -465,9 +467,6 @@ def get_2016cnn_bi_lstm(text, text_length, flags, embedding_initializer=None,
 
         h = tf.squeeze(h, [1])
 
-        print(h.get_shape().as_list())
-        print(text_length.get_shape().as_list())
-
         cells_fw = [tf.nn.rnn_cell.LSTMCell(size) for size in [flags.rnn_size]]
         cells_bw = [tf.nn.rnn_cell.LSTMCell(size) for size in [flags.rnn_size]]
         h, *_ = tf.contrib.rnn.stack_bidirectional_dynamic_rnn(cells_fw=cells_fw, cells_bw=cells_bw,
@@ -510,7 +509,6 @@ def get_cnn_bi_lstm(text, text_length, flags, embedding_initializer=None,
                                              scope='TextEmbedding')
         
         h = tf.expand_dims(h, 1)
-        print(h.get_shape().as_list())
         conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
         normalizer_params = _get_normalizer_params(is_training, flags)
         with conv2d_arg_scope, dropout_arg_scope:
@@ -1030,7 +1028,8 @@ class ModelLoader:
     def harmonic_mean(self, x, y):
         return 2*x*y/(x+y)
         
-    def eval_acc_gzsh(self, train_loader: Dataset, test_loader: Dataset, batch_size:int, seen_adjustment=0.0):
+    def eval_acc_gzsh(self, train_loader: Dataset, test_loader_unseen: Dataset, test_loader_seen: Dataset, 
+                      batch_size:int, seen_adjustment=0.0):
         """
         Runs evaluation loop in the generalized zero shot learning scenario
         :param data_set:
@@ -1038,34 +1037,40 @@ class ModelLoader:
         """
         logging.info("Computing train embeddings")
         image_embeddings_train, text_embeddings_train = self.predict_all(train_loader, batch_size)
-        logging.info("Computing test embeddings")
-        image_embeddings_test, text_embeddings_test = self.predict_all(test_loader, batch_size)
+        logging.info("Computing test embeddings, unseen")
+        image_embeddings_test_unseen, text_embeddings_test_unseen = self.predict_all(test_loader_unseen, batch_size)
+        logging.info("Computing test embeddings, seen")
+        image_embeddings_test_seen, text_embeddings_test_seen = self.predict_all(test_loader_seen, batch_size)
         
         logging.info("Computing generalized zero-shot performance metrics")        
-        seen_unseen_text_embeddings = np.concatenate([text_embeddings_train, text_embeddings_test], axis=0)
-        seen_unseen_classes = np.concatenate([train_loader.image_classes, test_loader.image_classes], axis=0)
+        seen_unseen_text_embeddings = np.concatenate(
+            [text_embeddings_train, text_embeddings_test_unseen, text_embeddings_test_seen], axis=0)
+        seen_unseen_classes = np.concatenate(
+            [train_loader.image_classes, test_loader_unseen.image_classes, test_loader_seen.image_classes], axis=0)
         seen_unseen_subsets = {}
         seen_unseen_subsets['seen'] = list(set(train_loader.image_classes))
-        seen_unseen_subsets['unseen'] = list(set(test_loader.image_classes))
+        seen_unseen_subsets['unseen'] = list(set(test_loader_unseen.image_classes))
         
         metric_model = MetricLoader(model_path=self.model_path, batch_size_image=100, 
                                     batch_size_text=len(set(seen_unseen_classes)))
         
-        metrics_gzsl_unseen = top1_gzsl(support_embeddings=seen_unseen_text_embeddings, query_embeddings=image_embeddings_test, 
-                                        class_ids_support=seen_unseen_classes, class_ids_query=test_loader.image_classes, 
+        metrics_gzsl_unseen = top1_gzsl(support_embeddings=seen_unseen_text_embeddings, 
+                                        query_embeddings=image_embeddings_test_unseen, 
+                                        class_ids_support=seen_unseen_classes, class_ids_query=test_loader_unseen.image_classes, 
                                         num_texts=[1, 5, 10, 20, 40, 100], seen_unseen_subsets=seen_unseen_subsets,
                                         distance_metric=metric_model, seen_adjustment=seen_adjustment)
-        metrics_gzsl_seen = top1_gzsl(support_embeddings=seen_unseen_text_embeddings, query_embeddings=image_embeddings_train, 
-                                      class_ids_support=seen_unseen_classes, class_ids_query=train_loader.image_classes, 
+        metrics_gzsl_seen = top1_gzsl(support_embeddings=seen_unseen_text_embeddings, 
+                                      query_embeddings=image_embeddings_test_seen, 
+                                      class_ids_support=seen_unseen_classes, class_ids_query=test_loader_seen.image_classes, 
                                       num_texts=[1, 5, 10, 20, 40, 100], seen_unseen_subsets=seen_unseen_subsets,
                                       distance_metric=metric_model, seen_adjustment=seen_adjustment)
         
         logging.info("Computing classical zero-shot performance metrics, test")
         metric_model = MetricLoader(model_path=self.model_path, batch_size_image=100, 
-                                    batch_size_text=len(set(test_loader.image_classes)))
-        metrics_test = ap_at_k_prototypes(support_embeddings=text_embeddings_test, 
-                                          query_embeddings=image_embeddings_test,
-                                          class_ids=test_loader.image_classes, k=50, num_texts=[1, 5, 10, 20, 40, 100],
+                                    batch_size_text=len(set(test_loader_unseen.image_classes)))
+        metrics_test = ap_at_k_prototypes(support_embeddings=text_embeddings_test_unseen, 
+                                          query_embeddings=image_embeddings_test_unseen,
+                                          class_ids=test_loader_unseen.image_classes, k=50, num_texts=[1, 5, 10, 20, 40, 100],
                                           distance_metric_prototypes=metric_model)
         logging.info("Computing classical zero-shot performance metrics, train")
         metric_model = MetricLoader(model_path=self.model_path, batch_size_image=100, 
@@ -1087,7 +1092,8 @@ class ModelLoader:
             metrics["test_"+key] = metrics_test[key]
             
         metrics.update(metrics_gzsl)
-        return metrics, (seen_unseen_text_embeddings, image_embeddings_train, image_embeddings_test)
+        embeddings = (seen_unseen_text_embeddings, image_embeddings_train, image_embeddings_test_seen, image_embeddings_test_unseen)
+        return metrics, embeddings
 
 
 def eval_acc_batch(flags: Namespace, datasets: Dict[str, Dataset]):
@@ -1111,8 +1117,14 @@ def eval_acc(flags: Namespace, datasets: Dict[str, Dataset]):
     model = ModelLoader(model_path=flags.pretrained_model_dir, 
                     batch_size=None, num_images=10, num_texts=10, max_text_len=max_text_len)
     
-    results_eval, _ = model.eval_acc_gzsh(train_loader=datasets[flags.train_split],
-                                          test_loader=datasets[flags.test_split], batch_size=10)
+    if flags.split_type == "GZSL":
+        results_eval, _ = model.eval_acc_gzsh(train_loader=datasets[flags.train_split],
+                                              test_loader_unseen=datasets[flags.test_split+"_unseen"],
+                                              test_loader_seen=datasets[flags.test_split+"_seen"], 
+                                              batch_size=10)
+    else:
+        raise Exception("NOT IMPLEMENTED")
+        
     for result_name, result_val in results_eval.items():
         logging.info("%s: %.3g" % (result_name, result_val))
 
@@ -1185,6 +1197,16 @@ def get_consistency_loss(image_embeddings, text_embeddings, flags, labels=None):
     return consistency_loss
 
 
+def load_data(flags):
+    if flags.split_type == "ZSL":
+        dataset_splits = get_dataset_splits(dataset_name=flags.dataset, data_dir=flags.data_dir,
+                                            splits=[flags.train_split, flags.test_split], flags=flags)
+    elif flags.split_type == "GZSL":
+        test_splits = [flags.test_split+"_seen", flags.test_split+"_unseen"]
+        dataset_splits = get_dataset_splits(dataset_name=flags.dataset, data_dir=flags.data_dir,
+                                            splits=[flags.train_split] + test_splits, flags=flags)
+    return dataset_splits
+
 def train(flags):
     log_dir = get_logdir_name(flags)
     flags.pretrained_model_dir = log_dir
@@ -1195,8 +1217,7 @@ def train(flags):
     image_size = get_image_size(flags.data_dir)
 
     # Get datasets
-    dataset_splits = get_dataset_splits(dataset_name=flags.dataset, data_dir=flags.data_dir,
-                                        splits=[flags.train_split, flags.test_split], flags=flags)
+    dataset_splits = load_data(flags)
     max_text_len = dataset_splits[flags.train_split].max_text_len
     with tf.Graph().as_default():
         global_step = tf.Variable(0, trainable=False, name='global_step', dtype=tf.int64)
