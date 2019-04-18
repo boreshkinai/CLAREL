@@ -118,17 +118,16 @@ def get_cross_classifier_loss(features_modality1, features_modality2, flags, sco
 
 def get_classifier_loss(features_modality1, features_modality2, labels, flags, scope="classifier_loss"):
     with tf.variable_scope(scope, reuse=tf.AUTO_REUSE):
-        samples = tf.concat([features_modality1, features_modality2, 0.5*(features_modality1+features_modality2)], axis=0)
-        labels = tf.concat([labels, labels, labels], axis=0)
+        labels = tf.concat([labels, labels], axis=0)
         
-#         h = slim.fully_connected(samples, num_outputs=flags.cross_class_num_clusters, activation_fn=tf.nn.relu, 
-#                                  normalizer_fn=None, trainable=True, 
-#                                  weights_regularizer=tf.contrib.layers.l2_regularizer(scale=flags.weight_decay), 
-#                                  scope='classifier_hidden')
+        logits1 = slim.fully_connected(features_modality1, num_outputs=flags.num_classes_train, activation_fn=None, 
+                                       normalizer_fn=None, trainable=True, weights_regularizer=None, 
+                                       scope='classifier_fc1')
+        logits2 = slim.fully_connected(features_modality2, num_outputs=flags.num_classes_train, activation_fn=None, 
+                                       normalizer_fn=None, trainable=True, weights_regularizer=None, 
+                                       scope='classifier_fc2')
+        logits = tf.concat([logits1, logits2], axis=0)
         
-        logits = slim.fully_connected(samples, num_outputs=flags.num_classes_train, activation_fn=None, 
-                                      normalizer_fn=None, trainable=True, weights_regularizer=None, 
-                                      scope='classifier_fc')
         loss = tf.reduce_mean(
             tf.nn.sparse_softmax_cross_entropy_with_logits(labels=labels, logits=logits))
         
