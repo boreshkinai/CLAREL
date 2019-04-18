@@ -228,6 +228,69 @@ class Xian2017CubLoader(Dataset):
             text_lines = f.read().splitlines()
         assert len(text_lines) == 10
         return text_lines
+    
+    def get_few_shots_images(self, labels, class_label, num_shots):
+        labels = np.array(labels)
+        idxs = np.arange(len(labels))
+        class_idxs = idxs[labels == class_label]
+        class_idxs = np.random.choice(class_idxs, size=num_shots, replace=True)
+        output = []
+        for idx in class_idxs:
+            f = self.image_embeddings[idx]
+            f_idx = np.random.choice(len(f), size=1, replace=False)
+            output.append(f[f_idx])
+        return np.row_stack(output)
+    
+    def get_few_shots_texts(self, labels, class_label, num_shots):
+        labels = np.array(labels)
+        idxs = np.arange(len(labels))
+        class_idxs = idxs[labels == class_label]
+        class_idxs = np.random.choice(class_idxs, size=num_shots, replace=True)
+        texts_out, lengths_out = [], []
+        for idx in class_idxs:
+            texts = self.tokenized_texts[idx]
+            lengths = np.array(self.tokenized_text_lengths[idx])
+            t_idx = np.random.choice(len(texts), size=1, replace=False).item()
+            texts_out.append(texts[t_idx])
+            lengths_out.append(lengths[t_idx])
+        return np.row_stack(texts_out), np.array(lengths_out)
+    
+    def next_batch_fewshot(self, batch_size: int = 32, num_images: int = 1, num_texts: int = 20):
+        """
+        :param batch_size: number of text/image pairs in the batch
+        :param num_images: number of images sampled per pair
+        :param num_texts: number of texts per pair
+        :return:
+        """
+        classes = np.unique(self.image_classes)
+        batch_classes = np.random.choice(classes, size=batch_size, replace=False)
+        batch_features = []
+        batch_texts = []
+        class_labels = np.zeros((batch_size,), dtype=np.int64)
+        batch_text_lengths = []
+        for i, bc in enumerate(batch_classes):
+            image_shots = self.get_few_shots_images(labels=self.image_classes, class_label=bc, 
+                                             num_shots=num_images)
+            texts, text_lengths = self.get_few_shots_texts(labels=self.image_classes, 
+                                                           class_label=bc, num_shots=num_texts)
+            
+            batch_features.append(image_shots)
+            batch_texts.append(texts)
+            batch_text_lengths.append(text_lengths)
+            class_labels[i] = int(bc)
+            
+        # Shuffling the text to avoid having a trivial relation between image indexes and text indexes
+        labels_txt2img = np.arange(batch_size, dtype=np.int32)
+        permutation = np.arange(batch_size, dtype=np.int32)
+        
+        if self.shuffle_text_in_batch:
+            permutation = np.random.choice(np.arange(batch_size, dtype=np.int32), size=batch_size, replace=False)
+            for i in range(batch_size):
+                labels_txt2img[permutation[i]] = i
+        labels_img2txt = permutation
+        
+        return np.array(batch_features), np.array(batch_texts)[permutation], np.array(batch_text_lengths)[permutation], \
+               (labels_txt2img, labels_img2txt), class_labels
 
     def next_batch_features(self, batch_size: int = 64, num_images: int = 2, num_texts: int = 5):
         """
