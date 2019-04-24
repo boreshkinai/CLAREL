@@ -111,21 +111,51 @@ class Xian2018FlowersLoader(Dataset):
 
         print("Number of tokens not found in the embedding:", num_misses, 'out of', len(self.tokenizer.word_index))
         self.word_vectors_idx = np.array(self.word_vectors_idx, dtype=np.float32)
-
+        
     def _load_split_class_ids(self):
-        with open(os.path.join(self.data_dir, self.split + 'classes%s.txt' % self.fold), 'r') as f:
+        split_map = {"trainval": '%sclasses.txt' % "trainval", 
+                     "test_seen": '%sclasses.txt' % "trainval", 
+                     "test_unseen": '%sclasses.txt' % "test", 
+                     "train": '%sclasses.txt' % "train", "val": '%sclasses.txt' % "val",
+                     "all": "%sclasses.txt" % "all"}
+        with open(os.path.join(self.data_dir, split_map[self.split]), 'r') as f:
             split_classes = f.read().splitlines()
-        ## Here _ is used as separator, as opposed to . in CUB
+        #
+        # Here _ is used as separator, as opposed to . in CUB
+        #
         split_classes = [c.split(sep='_')[-1] for c in split_classes]
         split_classes = ["%03d" %(int(c)) for c in split_classes]
-        return split_classes
-
+        self.split_class_ids = split_classes
+    
+    def _load_seen_unseen(self):
+        split_map = {"trainval": "trainval_loc", 
+                     "test_seen": "test_seen_loc", 
+                     "test_unseen": "test_unseen_loc", 
+                     "train": "train_loc", "val": "val_loc"}
+        self.att_splits_matfile = scipy.io.loadmat(os.path.join(self.cvpr18xian_dir, "att_splits.mat"))
+        self.res101_matfile = scipy.io.loadmat(os.path.join(self.cvpr18xian_dir, "res101.mat"))
+        if self.split in split_map.keys():
+            #
+            # -1 to correct for the matlab based indexing
+            #
+            self.xlsa_split_image_idxs = self.att_splits_matfile[split_map[self.split]].ravel()-1
+            
+            self.xlsa_split_image_names = self.res101_matfile['image_files'][self.xlsa_split_image_idxs].ravel()
+            self.xlsa_split_image_names = np.array([s[0].split('/')[-1].split('.')[0] for s in self.xlsa_split_image_names])
+        else:
+            self.xlsa_split_image_idxs = []
+            self.xlsa_split_image_names = []
+    
     def _load_image_meta(self):
+        # This is according to the image index counts in att_splits.mat
+        number_of_images = {"trainval": 5631, "test_seen": 1403, "test_unseen": 1155, 
+                            "all": 8189, "train": 5878, "val": 1156}
         # Load image names
         with open(os.path.join(self.data_dir, self.flowers_dir, 'images.txt'), 'r') as f:
             image_lines = f.read().splitlines()
         # Load train/val/test split file
-        split_class_ids = self._load_split_class_ids()
+        self._load_split_class_ids()
+        self._load_seen_unseen()
         
         self.image_ids = []
         self.image_paths = []
@@ -133,20 +163,28 @@ class Xian2018FlowersLoader(Dataset):
         self.image_classes = []
         self.image_file_names = []
         self.image_names = []
-        for line in image_lines:
+        for line in tqdm(image_lines):
             line_split = line.split(sep=' ')
             class_id = line_split[1].split(sep='.')[0]
-            if class_id in split_class_ids:
-                self.image_ids.append(int(line_split[0]))
-                self.image_paths.append(os.path.join(self.data_dir, self.flowers_dir))
+            if class_id in self.split_class_ids:
+                image_id = int(line_split[0])
+                image_path = os.path.join(self.data_dir, self.flowers_dir)
                 image_file_name = ".".join(line_split[1].split(sep='.')[1:])
-                self.image_classes_txt.append("class_00%s" %(class_id))
-                self.image_file_names.append(image_file_name)
-                self.image_classes.append(class_id)
-                self.image_names.append(image_file_name.split(sep='.')[0])
+                image_name = image_file_name.split(sep='.')[0]
+                if np.isin(image_name, self.xlsa_split_image_names).item() or len(self.xlsa_split_image_names) == 0:
+                    self.image_ids.append(image_id)
+                    self.image_paths.append(image_path)
+                    self.image_classes_txt.append("class_00%s" %(class_id))
+                    self.image_file_names.append(image_file_name)
+                    self.image_classes.append(class_id)
+                    self.image_names.append(image_file_name.split(sep='.')[0])
         
-        assert len(set(split_class_ids) - set(self.image_classes)) == 0
-        assert len(set(self.image_classes) - set(split_class_ids)) == 0
+        assert len(set(self.split_class_ids) - set(self.image_classes)) == 0
+        assert len(set(self.image_classes) - set(self.split_class_ids)) == 0
+        if len(self.xlsa_split_image_names) > 0:
+            assert len(set(self.xlsa_split_image_names) - set(self.image_names)) == 0
+            assert len(set(self.image_names) - set(self.xlsa_split_image_names)) == 0
+        assert number_of_images[self.split] == len(self.image_names)
 
     def _load_tokenized_text(self):
         # # Load vocabulary
