@@ -120,7 +120,7 @@ def get_arguments():
     parser.add_argument('--num_text_cnn_blocks', type=int, default=2)
     
     
-    parser.add_argument('--embedding_size', type=int, default=1024)
+    parser.add_argument('--embedding_size', type=int, default=512)
     parser.add_argument('--latent_dim', type=int, default=0)
     parser.add_argument('--hidden_dim', type=int, default=0)
     
@@ -148,6 +148,8 @@ def get_arguments():
     parser.add_argument('--modality_interaction', type=str, default="None", choices=["None", "FILM"])
     parser.add_argument('--film_weight_decay', type=float, default=0.001)
     parser.add_argument('--film_weight_decay_postmult', type=float, default=0.1)
+    
+    parser.add_argument('--train_scheme', type=str, default="PAIRWISE", choices=["PAIRWISE", "FEWSHOT"])
     
 
 
@@ -1166,13 +1168,6 @@ def test_pretrained_inception_model(images_pl, sess):
         
 def get_consistency_loss(image_embeddings, text_embeddings, flags, labels=None):
     if flags.mi_weight:
-#         # TODO: this can be removed
-#         image_embeddings_cond = tf.cond(mi_weight > 0.0, lambda: image_embeddings, 
-#                                         lambda: tf.stop_gradient(image_embeddings))
-#         text_embeddings_cond = tf.cond(mi_weight > 0.0, lambda: text_embeddings, 
-#                                        lambda: tf.stop_gradient(text_embeddings))
-#     None, "NMSE", "MI", "CROSSCLASS"
-
         image_distances = get_dist_mtx(image_embeddings)
         text_distances = get_dist_mtx(text_embeddings)
         
@@ -1207,6 +1202,29 @@ def load_data(flags):
                                             splits=[flags.train_split] + test_splits, flags=flags)
     return dataset_splits
 
+
+def get_batch(dataset_splits, flags):
+    if flags.train_scheme == "PAIRWISE":
+        if flags.image_fe_trainable:
+            images, text, text_length, match_labels = dataset_splits[flags.train_split].next_batch(
+                batch_size=flags.train_batch_size, num_images=flags.num_images, num_texts=flags.num_texts)
+            class_labels = None
+        else:
+            images, text, text_length, match_labels, class_labels = \
+                dataset_splits[flags.train_split].next_batch_features(
+                    batch_size=flags.train_batch_size, 
+                    num_images=flags.num_images, num_texts=flags.num_texts)
+    elif flags.train_scheme == "FEWSHOT":
+        if flags.image_fe_trainable:
+            raise Exception('NOT IMPLEMENTED')
+        else:
+            images, text, text_length, match_labels, class_labels = \
+                dataset_splits[flags.train_split].next_batch_fewshot(
+                    batch_size=flags.train_batch_size, 
+                    num_images=flags.num_images, num_texts=flags.num_texts)
+    return images, text, text_length, match_labels, class_labels
+
+    
 def train(flags):
     log_dir = get_logdir_name(flags)
     flags.pretrained_model_dir = log_dir
@@ -1287,15 +1305,7 @@ def train(flags):
             for step in range(checkpoint_step, flags.number_of_steps):
                 with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
                     dt_batch = time.time()
-                    if flags.image_fe_trainable:
-                        images, text, text_length, match_labels = dataset_splits[flags.train_split].next_batch(
-                            batch_size=flags.train_batch_size, num_images=flags.num_images, num_texts=flags.num_texts)
-                    else:
-                        images, text, text_length, match_labels, class_labels = \
-                            dataset_splits[flags.train_split].next_batch_features(
-                                batch_size=flags.train_batch_size, 
-                                num_images=flags.num_images, num_texts=flags.num_texts)
-
+                    images, text, text_length, match_labels, class_labels = get_batch(dataset_splits, flags)
                     labels_txt2img, labels_img2txt = match_labels
                     dt_batch = time.time() - dt_batch
                     
