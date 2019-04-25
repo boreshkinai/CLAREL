@@ -145,7 +145,7 @@ def get_arguments():
     parser.add_argument('--num_classes_train', type=int, default=250)
     parser.add_argument('--weight_decay_fc', type=float, default=0.001)
     
-    parser.add_argument('--modality_interaction', type=str, default="None", choices=["None", "FILM"])
+    parser.add_argument('--modality_interaction', type=str, default="NONE", choices=["NONE", "FILM_S", "FILM_I", "FILM_T"])
     parser.add_argument('--film_weight_decay', type=float, default=0.001)
     parser.add_argument('--film_weight_decay_postmult', type=float, default=0.1)
     
@@ -673,15 +673,17 @@ def get_film_layer(h, condition, flags, is_training, scope="film_layer", reuse=t
         beta_postmultiplier = tf.get_variable(name='beta_postmultiplier', dtype=tf.float32, initializer=0.0,
                                               trainable=True,
                                               regularizer=tf.contrib.layers.l2_regularizer(
-                                                  scale=flags.film_weight_decay_postmult,
-                                                  scope='penalize_beta'))
+                                              scale=flags.film_weight_decay_postmult,
+                                              scope='penalize_beta'))
         gamma_postmultiplier = tf.get_variable(name='gamma_postmultiplier', dtype=tf.float32, initializer=0.0,
                                                trainable=True,
                                                regularizer=tf.contrib.layers.l2_regularizer(
-                                                   scale=flags.film_weight_decay_postmult,
-                                                   scope='penalize_gamma'))
+                                               scale=flags.film_weight_decay_postmult,
+                                               scope='penalize_gamma'))
         with _get_film_fc_scope(is_training, flags):
             num_filters = h.shape.as_list()[-1]
+            condition = slim.fully_connected(condition, num_outputs=num_filters, 
+                                             activation_fn=activation_fn, scope='film_hidden_layer')
             beta = slim.fully_connected(condition, num_outputs=num_filters, activation_fn=None, scope='beta')
             gamma = slim.fully_connected(condition, num_outputs=num_filters, activation_fn=None, scope='gamma')
 
@@ -700,18 +702,20 @@ def get_film_layer(h, condition, flags, is_training, scope="film_layer", reuse=t
         return activation_fn(interaction)
 
 
-def get_film_interactor(embedding_mod1, embedding_mod2, flags, is_training, scope='film_interactor', reuse=tf.AUTO_REUSE):
+def get_film_interactor(image_embeddings, text_embeddings, flags, is_training, scope='film_interactor', reuse=tf.AUTO_REUSE):
     with tf.variable_scope(scope, reuse=reuse):
         with _get_fc_scope(is_training, flags):
-            embedding_mod1_film = get_film_layer(embedding_mod1, embedding_mod2, flags=flags, 
-                                                 is_training=is_training, scope="film_layer_1_to_2", reuse=reuse)
-            embedding_mod2_film = get_film_layer(embedding_mod2, embedding_mod1, flags=flags, 
-                                                 is_training=is_training, scope="film_layer_2_to_1", reuse=reuse)
+            if flags.modality_interaction == "FILM_I" or flags.modality_interaction == "FILM_S":
+                image_embeddings_film = get_film_layer(image_embeddings, condition=text_embeddings, flags=flags, 
+                                                       is_training=is_training, scope="film_layer_image", reuse=reuse)
+            if flags.modality_interaction == "FILM_T" or flags.modality_interaction == "FILM_S":
+                text_embeddings_film = get_film_layer(text_embeddings, condition=image_embeddings, flags=flags, 
+                                                      is_training=is_training, scope="film_layer_text", reuse=reuse)
             # mod1 embedding has size B1 x F x B2
             # mod1 embedding has size B2 x F x B1
             # This will align the modalities such that both of them have size B1 x F x B2
-            embedding_mod2_film = tf.transpose(embedding_mod2_film, perm=[2, 1, 0])
-            return embedding_mod1_film, embedding_mod2_film
+            text_embeddings_film = tf.transpose(text_embeddings_film, perm=[2, 1, 0])
+            return image_embeddings_film, text_embeddings_film
 
 
 def get_metric(image_embeddings, text_embeddings, flags, is_training, reuse=False):
@@ -719,7 +723,7 @@ def get_metric(image_embeddings, text_embeddings, flags, is_training, reuse=Fals
         # Here we compute logits of correctly matching text to a given image.
         # We could also compute logits of correctly matching an image to a given text by reversing
         # image_embeddings and text_embeddings
-        if flags.modality_interaction == "FILM":
+        if flags.modality_interaction.startswith("FILM"):
             image_embeddings_film, text_embeddings_film = get_film_interactor(image_embeddings, text_embeddings,
                                                                     flags=flags, is_training=is_training,
                                                                     scope='film_interactor', reuse=reuse)
