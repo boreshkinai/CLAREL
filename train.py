@@ -708,9 +708,13 @@ def get_film_interactor(image_embeddings, text_embeddings, flags, is_training, s
             if flags.modality_interaction == "FILM_I" or flags.modality_interaction == "FILM_S":
                 image_embeddings_film = get_film_layer(image_embeddings, condition=text_embeddings, flags=flags, 
                                                        is_training=is_training, scope="film_layer_image", reuse=reuse)
+            else:
+                image_embeddings_film = image_embeddings[:,:,None]
             if flags.modality_interaction == "FILM_T" or flags.modality_interaction == "FILM_S":
                 text_embeddings_film = get_film_layer(text_embeddings, condition=image_embeddings, flags=flags, 
                                                       is_training=is_training, scope="film_layer_text", reuse=reuse)
+            else:
+                text_embeddings_film = text_embeddings[:,:,None]
             # mod1 embedding has size B1 x F x B2
             # mod1 embedding has size B2 x F x B1
             # This will align the modalities such that both of them have size B1 x F x B2
