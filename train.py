@@ -1064,11 +1064,17 @@ class ModelLoader:
         metric_model = MetricLoader(model_path=self.model_path, batch_size_image=100, 
                                     batch_size_text=len(set(seen_unseen_classes)))
         
+        print("****************")
+        print("UNSEEN images test")
+        print("****************")
         metrics_gzsl_unseen = top1_gzsl(support_embeddings=seen_unseen_text_embeddings, 
                                         query_embeddings=image_embeddings_test_unseen, 
                                         class_ids_support=seen_unseen_classes, class_ids_query=test_loader_unseen.image_classes, 
                                         num_texts=[1, 5, 10, 20, 40, 100], seen_unseen_subsets=seen_unseen_subsets,
                                         distance_metric=metric_model, seen_adjustment=seen_adjustment)
+        print("****************")
+        print("SEEN images test")
+        print("****************")
         metrics_gzsl_seen = top1_gzsl(support_embeddings=seen_unseen_text_embeddings, 
                                       query_embeddings=image_embeddings_test_seen, 
                                       class_ids_support=seen_unseen_classes, class_ids_query=test_loader_seen.image_classes, 

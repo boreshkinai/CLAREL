@@ -119,6 +119,7 @@ class Xian2017CubLoader(Dataset):
                      "test_seen": '%sclasses.txt' % "trainval", 
                      "test_unseen": '%sclasses.txt' % "test", 
                      "train": '%sclasses1.txt' % "train", "val": '%sclasses1.txt' % "val",
+                     "val_seen": '%sclasses1.txt' % "train", "val_unseen": '%sclasses1.txt' % "val",
                      "all": "%sclasses.txt" % "all"}
         with open(os.path.join(self.xlsa17_dir, split_map[self.split]), 'r') as f:
             split_classes = f.read().splitlines()
@@ -128,13 +129,28 @@ class Xian2017CubLoader(Dataset):
         split_map = {"trainval": "trainval_loc", 
                      "test_seen": "test_seen_loc", 
                      "test_unseen": "test_unseen_loc", 
-                     "train": "train_loc", "val": "val_loc"}
+                     "train": "train_loc", "val": "val_loc",
+                     "val_seen": "train_loc", "val_unseen": "val_loc"
+                    }
         self.att_splits_matfile = scipy.io.loadmat(os.path.join(self.xlsa17_dir, "att_splits.mat"))
         self.res101_matfile = scipy.io.loadmat(os.path.join(self.xlsa17_dir, "res101.mat"))
         if self.split in split_map.keys():
+            #
             # -1 to correct for the matlab based indexing
+            #
             self.xlsa_split_image_idxs = self.att_splits_matfile[split_map[self.split]].ravel()-1
-
+            #
+            # This is to create a validation set with both seen and unseen classes and to make the split deterministic
+            #
+            rng = np.random.RandomState(2019 + 4 + 27)
+            train_idxs = rng.choice(self.xlsa_split_image_idxs, 
+                                    size=int(len(self.xlsa_split_image_idxs)*0.8), replace=False)
+            val_seen_idxs = np.array(list(set(self.xlsa_split_image_idxs) - set(train_idxs)))
+            if self.split == "val_seen":
+                self.xlsa_split_image_idxs = val_seen_idxs
+            elif self.split == "train":
+                self.xlsa_split_image_idxs = train_idxs
+                
             self.xlsa_split_image_names = self.res101_matfile['image_files'][self.xlsa_split_image_idxs].ravel()
             self.xlsa_split_image_names = np.array([s[0].split('/')[-1].split('.')[0] for s in self.xlsa_split_image_names])
         else:
@@ -144,7 +160,7 @@ class Xian2017CubLoader(Dataset):
     def _load_image_meta(self):
         # This is according to https://arxiv.org/pdf/1703.04394.pdf
         number_of_images = {"trainval": 7057, "test_seen": 1764, "test_unseen": 2967, 
-                            "all": 11788, "train": 5875, "val": 2946}
+                            "all": 11788, "train": 4700, "val": 2946, 'val_seen': 1175, 'val_unseen': 2946}
         # Load image names
         with open(os.path.join(self.data_dir, self.cub_dir, 'images.txt'), 'r') as f:
             image_lines = f.read().splitlines()

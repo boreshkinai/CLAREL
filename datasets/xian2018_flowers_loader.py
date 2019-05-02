@@ -117,6 +117,7 @@ class Xian2018FlowersLoader(Dataset):
                      "test_seen": '%sclasses.txt' % "trainval", 
                      "test_unseen": '%sclasses.txt' % "test", 
                      "train": '%sclasses.txt' % "train", "val": '%sclasses.txt' % "val",
+                     "val_seen": '%sclasses.txt' % "train", "val_unseen": '%sclasses.txt' % "val",
                      "all": "%sclasses.txt" % "all"}
         with open(os.path.join(self.data_dir, split_map[self.split]), 'r') as f:
             split_classes = f.read().splitlines()
@@ -131,7 +132,9 @@ class Xian2018FlowersLoader(Dataset):
         split_map = {"trainval": "trainval_loc", 
                      "test_seen": "test_seen_loc", 
                      "test_unseen": "test_unseen_loc", 
-                     "train": "train_loc", "val": "val_loc"}
+                     "train": "train_loc", "val": "val_loc",
+                     "val_seen": "train_loc", "val_unseen": "val_loc"
+                     }
         self.att_splits_matfile = scipy.io.loadmat(os.path.join(self.cvpr18xian_dir, "att_splits.mat"))
         self.res101_matfile = scipy.io.loadmat(os.path.join(self.cvpr18xian_dir, "res101.mat"))
         if self.split in split_map.keys():
@@ -139,9 +142,22 @@ class Xian2018FlowersLoader(Dataset):
             # -1 to correct for the matlab based indexing
             #
             self.xlsa_split_image_idxs = self.att_splits_matfile[split_map[self.split]].ravel()-1
+            #
+            # This is to create a validation set with both seen and unseen classes and to make the split deterministic
+            #
+            rng = np.random.RandomState(2019 + 4 + 27)
+            train_idxs = rng.choice(self.xlsa_split_image_idxs, 
+                                    size=int(len(self.xlsa_split_image_idxs)*0.8), replace=False)
+            val_seen_idxs = np.array(list(set(self.xlsa_split_image_idxs) - set(train_idxs)))
+            if self.split == "val_seen":
+                self.xlsa_split_image_idxs = val_seen_idxs
+            elif self.split == "train":
+                self.xlsa_split_image_idxs = train_idxs
             
             self.xlsa_split_image_names = self.res101_matfile['image_files'][self.xlsa_split_image_idxs].ravel()
             self.xlsa_split_image_names = np.array([s[0].split('/')[-1].split('.')[0] for s in self.xlsa_split_image_names])
+            
+            
         else:
             self.xlsa_split_image_idxs = []
             self.xlsa_split_image_names = []
@@ -149,7 +165,7 @@ class Xian2018FlowersLoader(Dataset):
     def _load_image_meta(self):
         # This is according to the image index counts in att_splits.mat
         number_of_images = {"trainval": 5631, "test_seen": 1403, "test_unseen": 1155, 
-                            "all": 8189, "train": 5878, "val": 1156}
+                            "all": 8189, "train": 4702, "val": 1156, 'val_seen': 1176, 'val_unseen': 1156}
         # Load image names
         with open(os.path.join(self.data_dir, self.flowers_dir, 'images.txt'), 'r') as f:
             image_lines = f.read().splitlines()
