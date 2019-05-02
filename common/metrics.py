@@ -122,6 +122,18 @@ def top1_gzsl(support_embeddings, query_embeddings, class_ids_support, class_ids
             dist = np.sqrt(np.sum(np.square(array_prototypes[:,:,None] - query_embeddings.transpose()), axis=1))
         else:
             dist = distance_metric.predict_all(query_embeddings, array_prototypes).transpose()
+        
+        seen_unseen_images = np.isin(class_ids_query, seen_unseen_subsets['seen'])
+        dist_var = dist*dist        
+        
+        dist_var_seen = np.sqrt(dist_var[seen_unseen_flag.astype(np.bool)].min(axis=0).mean())
+        dist_var_unseen = np.sqrt(dist_var[~seen_unseen_flag.astype(np.bool)].min(axis=0).mean())
+        print("=================")
+        print("STD seen prototype:")
+        print(dist_var_seen)
+        print("STD unseen prototype:")
+        print(dist_var_unseen)
+        
         dist = dist * (seen_adjustment*seen_unseen_flag[:,None] + 1.0)
         nn_idxs = np.argmin(dist, axis=0)
         top1_acc = per_class_average_top1_acc(labels=class_ids_query, predictions=class_ids_prototypes[nn_idxs])
