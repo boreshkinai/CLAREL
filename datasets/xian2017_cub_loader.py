@@ -6,7 +6,7 @@ from tqdm import tqdm
 import numpy as np
 from torch.utils.serialization import load_lua
 from keras.preprocessing.text import Tokenizer
-from keras.preprocessing.sequence import pad_sequences
+from g.preprocessing.sequence import pad_sequences
 from datasets import Dataset
 import pickle
 import gzip
@@ -124,6 +124,13 @@ class Xian2017CubLoader(Dataset):
         with open(os.path.join(self.xlsa17_dir, split_map[self.split]), 'r') as f:
             split_classes = f.read().splitlines()
         self.split_class_ids = [c.split(sep='.')[0] for c in split_classes]
+        #
+        # This is to equalize seen/unseen class proportions in test and validation. 150/50 and 100/33
+        #
+        if self.split == "val_unseen":
+            rng = np.random.RandomState(2019 + 5 + 9)
+            self.split_class_ids = list(rng.choice(self.split_class_ids, size=33, replace=False))
+        
         
     def _load_seen_unseen(self):
         split_map = {"trainval": "trainval_loc", 
@@ -151,8 +158,14 @@ class Xian2017CubLoader(Dataset):
             elif self.split == "train":
                 self.xlsa_split_image_idxs = train_idxs
                 
-            self.xlsa_split_image_names = self.res101_matfile['image_files'][self.xlsa_split_image_idxs].ravel()
-            self.xlsa_split_image_names = np.array([s[0].split('/')[-1].split('.')[0] for s in self.xlsa_split_image_names])
+            self.xlsa_split_image_names_raw = self.res101_matfile['image_files'][self.xlsa_split_image_idxs].ravel()
+            self.xlsa_split_image_names = np.array([s[0].split('/')[-1].split('.')[0] for s in self.xlsa_split_image_names_raw])
+            #
+            # Select subset of images from a given set of classes
+            #
+            self.xlsa_split_classes = [s[0].split("/")[-2].split(".")[0] for s in self.xlsa_split_image_names_raw]
+            xlsa_in_split_class_ids = np.isin(self.xlsa_split_classes, self.split_class_ids)
+            self.xlsa_split_image_names = self.xlsa_split_image_names[xlsa_in_split_class_ids]
         else:
             self.xlsa_split_image_idxs = []
             self.xlsa_split_image_names = []
@@ -160,7 +173,7 @@ class Xian2017CubLoader(Dataset):
     def _load_image_meta(self):
         # This is according to https://arxiv.org/pdf/1703.04394.pdf
         number_of_images = {"trainval": 7057, "test_seen": 1764, "test_unseen": 2967, 
-                            "all": 11788, "train": 4700, "val": 2946, 'val_seen': 1175, 'val_unseen': 2946}
+                            "all": 11788, "train": 4700, "val": 2946, 'val_seen': 1175, 'val_unseen': 1929}
         # Load image names
         with open(os.path.join(self.data_dir, self.cub_dir, 'images.txt'), 'r') as f:
             image_lines = f.read().splitlines()
