@@ -151,6 +151,8 @@ def get_arguments():
     
     parser.add_argument('--train_scheme', type=str, default="PAIRWISE", choices=["PAIRWISE", "FEWSHOT"])
     
+    parser.add_argument('--txt2img_weight', type=float, default=0.5, help="The weight of the text to image retrieval loss")
+    
 
 
     args = parser.parse_args()
@@ -885,7 +887,6 @@ class MetricLoader:
             config.gpu_options.allow_growth = True
             self.sess = tf.Session(config=config)
 
-            print('Loading model')
             global_vars = tf.global_variables()
             if len(global_vars) > 0:
                 init_fn = slim.assign_from_checkpoint_fn(latest_checkpoint, global_vars)
@@ -955,7 +956,6 @@ class ModelLoader:
             self.image_embeddings = image_embeddings
             self.text_embeddings = text_embeddings
 
-            print('Loading model')
             init_fn = slim.assign_from_checkpoint_fn(latest_checkpoint, tf.global_variables())
 
             config = tf.ConfigProto(allow_soft_placement=True)
@@ -1064,17 +1064,17 @@ class ModelLoader:
         metric_model = MetricLoader(model_path=self.model_path, batch_size_image=100, 
                                     batch_size_text=len(set(seen_unseen_classes)))
         
-        print("****************")
-        print("UNSEEN images test")
-        print("****************")
+#         print("****************")
+#         print("UNSEEN images test")
+#         print("****************")
         metrics_gzsl_unseen = top1_gzsl(support_embeddings=seen_unseen_text_embeddings, 
                                         query_embeddings=image_embeddings_test_unseen, 
                                         class_ids_support=seen_unseen_classes, class_ids_query=test_loader_unseen.image_classes, 
                                         num_texts=[1, 5, 10, 20, 40, 100], seen_unseen_subsets=seen_unseen_subsets,
                                         distance_metric=metric_model, seen_adjustment=seen_adjustment)
-        print("****************")
-        print("SEEN images test")
-        print("****************")
+#         print("****************")
+#         print("SEEN images test")
+#         print("****************")
         metrics_gzsl_seen = top1_gzsl(support_embeddings=seen_unseen_text_embeddings, 
                                       query_embeddings=image_embeddings_test_seen, 
                                       class_ids_support=seen_unseen_classes, class_ids_query=test_loader_seen.image_classes, 
@@ -1280,8 +1280,8 @@ def train(flags):
         consistency_loss = get_consistency_loss(image_embeddings, text_embeddings, flags, labels=labels_class)
         
         regu_losses = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
-        loss_tot = tf.add_n([0.5 * (1.0-mi_weight) * loss_txt2img, 
-                             0.5 * (1.0-mi_weight) * loss_img2txt, 
+        loss_tot = tf.add_n([flags.txt2img_weight * (1.0-mi_weight) * loss_txt2img, 
+                             (1.0 - flags.txt2img_weight) * (1.0-mi_weight) * loss_img2txt, 
                              consistency_loss*mi_weight] + regu_losses)
         misclass_txt2img = 1.0 - slim.metrics.accuracy(tf.argmax(logits, 1), match_labels_txt2img_pl)
         misclass_img2txt = 1.0 - slim.metrics.accuracy(tf.argmax(logits, 0), match_labels_img2txt_pl)

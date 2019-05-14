@@ -128,11 +128,11 @@ def top1_gzsl(support_embeddings, query_embeddings, class_ids_support, class_ids
         
         dist_var_seen = np.sqrt(dist_var[seen_unseen_flag.astype(np.bool)].min(axis=0).mean())
         dist_var_unseen = np.sqrt(dist_var[~seen_unseen_flag.astype(np.bool)].min(axis=0).mean())
-        print("=================")
-        print("STD seen prototype:")
-        print(dist_var_seen)
-        print("STD unseen prototype:")
-        print(dist_var_unseen)
+#         print("=================")
+#         print("STD seen prototype:")
+#         print(dist_var_seen)
+#         print("STD unseen prototype:")
+#         print(dist_var_unseen)
         
         dist = dist * (seen_adjustment*seen_unseen_flag[:,None] + 1.0)
         nn_idxs = np.argmin(dist, axis=0)
