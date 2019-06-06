@@ -28,7 +28,7 @@ from datasets import Dataset
 from datasets.dataset_list import get_dataset_splits
 from common.metrics import ap_at_k_prototypes, top1_gzsl
 from common.pretrained_models import IMAGE_MODEL_CHECKPOINTS
-from common.losses import get_rmse_loss, get_mi_loss, get_dist_mtx, get_cross_classifier_loss, get_som_loss, get_classifier_loss
+from common.losses import get_classifier_loss
 
 
 tf.logging.set_verbosity(tf.logging.INFO)
@@ -52,8 +52,7 @@ def get_arguments():
 
     # Training parameters
     parser.add_argument('--repeat', type=int, default=0)
-    parser.add_argument('--number_of_steps', type=int, default=int(100001),
-                        help="Number of training steps (number of Epochs in Hugo's paper)")
+    parser.add_argument('--number_of_steps', type=int, default=int(150001), help="Number of training steps")
     parser.add_argument('--number_of_steps_to_early_stop', type=int, default=int(1000000),
                         help="Number of training steps after half way to early stop the training")
     parser.add_argument('--log_dir', type=str, default='', help='Base log dir')
@@ -62,7 +61,7 @@ def get_arguments():
     parser.add_argument('--train_batch_size', type=int, default=32, help='Training batch size.')
     parser.add_argument('--num_images', type=int, default=1, help='Number of image samples per image/text pair.')
     parser.add_argument('--num_texts', type=int, default=10, help='Number of text samples per image/text pair.')
-    parser.add_argument('--init_learning_rate', type=float, default=0.1005, help='Initial learning rate.')
+    parser.add_argument('--init_learning_rate', type=float, default=0.1, help='Initial learning rate.')
     parser.add_argument('--save_summaries_secs', type=int, default=60, help='Time between saving summaries')
     parser.add_argument('--save_interval_secs', type=int, default=60, help='Time between saving model?')
     parser.add_argument('--optimizer', type=str, default='sgd', choices=['sgd', 'adam'])
@@ -70,9 +69,7 @@ def get_arguments():
     # Learning rate paramteres
     parser.add_argument('--lr_anneal', type=str, default='exp', choices=['exp'])
     parser.add_argument('--n_lr_decay', type=int, default=3)
-    parser.add_argument('--lr_decay_rate', type=float, default=2.0)
-    parser.add_argument('--num_steps_decay_pwc', type=int, default=2500,
-                        help='Decay learning rate every num_steps_decay_pwc')
+    parser.add_argument('--lr_decay_rate', type=float, default=10.0)
 
     parser.add_argument('--clip_gradient_norm', type=float, default=1.0, help='gradient clip norm.')
     parser.add_argument('--weights_initializer_factor', type=float, default=0.1,
@@ -82,13 +79,10 @@ def get_arguments():
     parser.add_argument('--eval_interval_secs', type=int, default=120, help='Time between evaluating model?')
     parser.add_argument('--eval_interval_steps', type=int, default=2500,
                         help='Number of train steps between evaluating model in the training loop')
-    parser.add_argument('--eval_interval_fine_steps', type=int, default=1000,
-                        help='Number of train steps between evaluating model in the training loop in the final phase')
     parser.add_argument('--num_samples_eval', type=int, default=100, help='Number of evaluation samples?')
     parser.add_argument('--eval_batch_size', type=int, default=32, help='Evaluation batch size?')
     # Test parameters
-    parser.add_argument('--pretrained_model_dir', type=str,
-                        default='./logs/batch_size-32-lr-0.122-lr_anneal-cos-epochs-100.0-dropout-1.0-optimizer-sgd-weight_decay-0.0005-augment-False-num_filters-64-feature_extractor-simple_res_net-task_encoder-class_mean-attention_num_filters-32/train',
+    parser.add_argument('--pretrained_model_dir', type=str, default='./logs/',
                         help='Path to the pretrained model to run the nearest neigbor baseline test.')
     # Architecture parameters
     parser.add_argument('--dropout', type=float, default=0.25)
@@ -96,7 +90,8 @@ def get_arguments():
     parser.add_argument('--embedding_pooled', type=bool, default=True)
     # Image feature extractor
     parser.add_argument('--image_feature_extractor', type=str, default='resnet101',
-                        choices=['simple_res_net', 'inception_v3', 'inception_v2', 'resnet101'], help='Which feature extractor to use')
+                        choices=['simple_res_net', 'inception_v3', 'inception_v2', 'resnet101'], 
+                        help='Which feature extractor to use')
     parser.add_argument('--image_fe_trainable', type=bool, default=False)
     parser.add_argument('--num_filters', type=int, default=64)
     parser.add_argument('--num_units_in_block', type=int, default=3)
