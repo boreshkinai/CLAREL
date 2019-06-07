@@ -218,7 +218,7 @@ def _get_normalizer_params(is_training, flags):
         'scale': True,
         'trainable': True,
         'is_training': is_training,
-        'updates_collections': tf.GraphKeys.UPDATE_OPS,  # [tf.GraphKeys.UPDATE_OPS, None]
+        'updates_collections': tf.GraphKeys.UPDATE_OPS,  
         'param_regularizers': {'beta': tf.contrib.layers.l2_regularizer(scale=flags.weight_decay),
                                'gamma': tf.contrib.layers.l2_regularizer(scale=flags.weight_decay)},
     }
@@ -256,9 +256,6 @@ def get_simple_res_net(images, flags, num_filters, is_training=False, reuse=None
     activation_fn = ACTIVATION_MAP[flags.activation]
     with conv2d_arg_scope, dropout_arg_scope:
         with tf.variable_scope(scope or 'image_feature_extractor', reuse=reuse):
-            # h = slim.conv2d(images, num_outputs=num_filters[0], kernel_size=6, stride=1,
-            #                 scope='conv_input', padding='SAME')
-            # h = slim.max_pool2d(h, kernel_size=2, stride=2, padding='SAME', scope='max_pool_input')
             h = images
             for i in range(len(num_filters)):
                 # make shortcut
@@ -507,14 +504,10 @@ def get_simple_bi_lstm(text, text_length, flags, embedding_initializer=None,
 
         cells_fw = [tf.nn.rnn_cell.LSTMCell(size) for size in [flags.rnn_size]]
         cells_bw = [tf.nn.rnn_cell.LSTMCell(size) for size in [flags.rnn_size]]
-#         initial_states_fw = [cell.zero_state(text.get_shape()[0], dtype=tf.float32) for cell in cells_fw]
-#         initial_states_bw = [cell.zero_state(text.get_shape()[0], dtype=tf.float32) for cell in cells_bw]
 
         h, *_ = tf.contrib.rnn.stack_bidirectional_dynamic_rnn(cells_fw=cells_fw,
                                                                cells_bw=cells_bw,
                                                                inputs=h,
-#                                                                initial_states_fw=initial_states_fw,
-#                                                                initial_states_bw=initial_states_bw,
                                                                dtype=tf.float32,
                                                                sequence_length=text_length)
         mask = tf.expand_dims(tf.sequence_mask(text_length, maxlen=tf.shape(text)[1], dtype=tf.float32), axis=-1)
@@ -927,17 +920,12 @@ class ModelLoader:
         metric_model = MetricLoader(model_path=self.model_path, batch_size_image=100, 
                                     batch_size_text=len(set(seen_unseen_classes)))
         
-#         print("****************")
-#         print("UNSEEN images test")
-#         print("****************")
         metrics_gzsl_unseen = top1_gzsl(support_embeddings=seen_unseen_text_embeddings, 
                                         query_embeddings=image_embeddings_test_unseen, 
                                         class_ids_support=seen_unseen_classes, class_ids_query=test_loader_unseen.image_classes, 
                                         num_texts=[1, 5, 10, 20, 40, 100], seen_unseen_subsets=seen_unseen_subsets,
                                         distance_metric=metric_model, seen_adjustment=seen_adjustment)
-#         print("****************")
-#         print("SEEN images test")
-#         print("****************")
+        
         metrics_gzsl_seen = top1_gzsl(support_embeddings=seen_unseen_text_embeddings, 
                                       query_embeddings=image_embeddings_test_seen, 
                                       class_ids_support=seen_unseen_classes, class_ids_query=test_loader_seen.image_classes, 
@@ -1056,7 +1044,6 @@ def train(flags):
     log_dir = get_logdir_name(flags)
     flags.pretrained_model_dir = log_dir
     log_dir = os.path.join(log_dir, 'train')
-    # This is setting to run evaluation loop only once
     image_size = get_image_size(flags.data_dir)
 
     # Get datasets
