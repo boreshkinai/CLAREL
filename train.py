@@ -27,7 +27,7 @@ from common.util import Namespace
 from datasets import Dataset
 from datasets.dataset_list import get_dataset_splits
 from common.metrics import ap_at_k_prototypes, top1_gzsl
-from common.pretrained_models import IMAGE_MODEL_CHECKPOINTS
+from common.pretrained_models import IMAGE_MODEL_CHECKPOINTS, get_image_fe_restorer
 from common.losses import get_classifier_loss
 
 
@@ -1010,22 +1010,8 @@ def eval_acc(flags: Namespace, datasets: Dict[str, Dataset]):
     log_dir = get_logdir_name(flags)
     eval_writer = summary_writer(log_dir + '/eval')
     eval_writer(model.step, **results_eval)
-
-
-def get_image_fe_restorer(flags: Namespace):
-    def name_in_checkpoint(var: tf.Variable):
-        return '/'.join(var.op.name.split('/')[2:])
-        
-    if flags.image_feature_extractor == 'inception_v3' and flags.image_fe_trainable:
-        vars = tf.get_collection(key=tf.GraphKeys.MODEL_VARIABLES, scope='.*InceptionV3')
-        return tf.train.Saver(var_list={name_in_checkpoint(var): var for var in vars})
-    elif flags.image_feature_extractor == 'inception_v2' and flags.image_fe_trainable:
-        vars = tf.get_collection(key=tf.GraphKeys.MODEL_VARIABLES, scope='.*InceptionV2')
-        return tf.train.Saver(var_list={name_in_checkpoint(var): var for var in vars})
-    else:
-        return None
-
-        
+    
+    
 def get_consistency_loss(image_embeddings, text_embeddings, flags, labels=None):
     if flags.mi_weight:
         if flags.consistency_loss == "CLASSIFIER":
