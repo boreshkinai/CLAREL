@@ -36,9 +36,6 @@ logging.basicConfig(level=logging.INFO)
 
 def get_arguments():
     parser = argparse.ArgumentParser()
-
-    parser.add_argument('--mode', type=str, default='train',
-                        choices=['train', 'eval', 'test'])
     # Dataset parameters
     parser.add_argument('--data_dir', type=str, default=None, help='Path to the data.')
     parser.add_argument('--split_type', type=str, default='GZSL', choices=['ZSL', 'GZSL'],
@@ -53,20 +50,18 @@ def get_arguments():
     # Training parameters
     parser.add_argument('--repeat', type=int, default=0)
     parser.add_argument('--number_of_steps', type=int, default=int(150001), help="Number of training steps")
-    parser.add_argument('--number_of_steps_to_early_stop', type=int, default=int(1000000),
-                        help="Number of training steps after half way to early stop the training")
     parser.add_argument('--log_dir', type=str, default='', help='Base log dir')
     parser.add_argument('--exp_dir', type=str, default=None, help='experiement directory for Borgy')
     # Batch parameters
     parser.add_argument('--train_batch_size', type=int, default=32, help='Training batch size.')
     parser.add_argument('--num_images', type=int, default=1, help='Number of image samples per image/text pair.')
     parser.add_argument('--num_texts', type=int, default=10, help='Number of text samples per image/text pair.')
-    parser.add_argument('--init_learning_rate', type=float, default=0.1, help='Initial learning rate.')
     parser.add_argument('--save_summaries_secs', type=int, default=60, help='Time between saving summaries')
     parser.add_argument('--save_interval_secs', type=int, default=60, help='Time between saving model?')
     parser.add_argument('--optimizer', type=str, default='sgd', choices=['sgd', 'adam'])
     parser.add_argument('--augment', type=bool, default=False)
     # Learning rate paramteres
+    parser.add_argument('--init_learning_rate', type=float, default=0.1, help='Initial learning rate.')
     parser.add_argument('--lr_anneal', type=str, default='exp', choices=['exp'])
     parser.add_argument('--n_lr_decay', type=int, default=3)
     parser.add_argument('--lr_decay_rate', type=float, default=10.0)
@@ -75,8 +70,6 @@ def get_arguments():
     parser.add_argument('--weights_initializer_factor', type=float, default=0.1,
                         help='multiplier in the variance of the initialization noise.')
     # Evaluation parameters
-    parser.add_argument('--max_number_of_evaluations', type=float, default=float('inf'))
-    parser.add_argument('--eval_interval_secs', type=int, default=120, help='Time between evaluating model?')
     parser.add_argument('--eval_interval_steps', type=int, default=2500,
                         help='Number of train steps between evaluating model in the training loop')
     parser.add_argument('--num_samples_eval', type=int, default=100, help='Number of evaluation samples?')
@@ -99,8 +92,6 @@ def get_arguments():
     parser.add_argument('--num_max_pools', type=int, default=3)
     parser.add_argument('--block_size_growth', type=float, default=2.0)
     parser.add_argument('--activation', type=str, default='relu', choices=['relu', 'selu', 'swish-1'])
-    parser.add_argument('--train_bn_proba', type=float, default=1.0,
-                        help='Probability that batch norm/dropout layers are in train mode during training')
     # Text feature extractor
     parser.add_argument('--word_embed_trainable', type=bool, default=False)
     parser.add_argument('--word_embed_dim', type=int, default=300) # this should be equal to the word2vec dimension
@@ -115,37 +106,19 @@ def get_arguments():
     parser.add_argument('--num_text_cnn_blocks', type=int, default=2)
     
     
-    parser.add_argument('--embedding_size', type=int, default=512)
+    parser.add_argument('--embedding_size', type=int, default=1024)
     parser.add_argument('--latent_dim', type=int, default=0)
     parser.add_argument('--hidden_dim', type=int, default=0)
     
-
-    parser.add_argument('--metric_multiplier_init', type=float, default=5.0, help='multiplier of cosine metric')
-    parser.add_argument('--metric_multiplier_trainable', type=bool, default=False,
-                        help='multiplier of cosine metric trainability')
-    parser.add_argument('--polynomial_metric_order', type=int, default=1)
     # Cross modal consistency loss
-    parser.add_argument('--mi_weight', type=float, default=None,
+    parser.add_argument('--mi_weight', type=float, default=0.5,
                         help='The weight of the mutual information term between text and image distances')
-    parser.add_argument('--mi_kernel_width', type=float, default=1.0,
-                        help='The width of KDE kernel used to estmiate MI')
     parser.add_argument('--mi_train_offset', type=float, default=0.0,
                         help='The proportion of steps to delay the inclusion of MI loss into total loss')
-    parser.add_argument('--consistency_loss', type=str, default=None, choices=[None, "NMSE", "MI", "CROSSCLASS", 
-                                                                                "SOM", "CLASSIFIER"])
-    parser.add_argument('--cross_class_num_clusters', type=int, default=1024)
-    parser.add_argument('--cross_class_metric_scale', type=float, default=100.0)
-    parser.add_argument('--cross_class_decay', type=float, default=0.9)
-    parser.add_argument('--cross_class_sigma_0', type=float, default=1.0)
+    parser.add_argument('--consistency_loss', type=str, default="CLASSIFIER", choices=[None, "CLASSIFIER"])
     parser.add_argument('--num_classes_train', type=int, default=250)
     parser.add_argument('--weight_decay_fc', type=float, default=0.001)
-    
-    parser.add_argument('--modality_interaction', type=str, default="NONE", choices=["NONE", "FILM_S", "FILM_I", "FILM_T"])
-    parser.add_argument('--film_weight_decay', type=float, default=0.001)
-    parser.add_argument('--film_weight_decay_postmult', type=float, default=0.1)
-    
-    parser.add_argument('--train_scheme', type=str, default="PAIRWISE", choices=["PAIRWISE", "FEWSHOT"])
-    
+        
     parser.add_argument('--txt2img_weight', type=float, default=0.5, help="The weight of the text to image retrieval loss")
     
 
@@ -227,18 +200,6 @@ class ScaledVarianceRandomNormal(init_ops.Initializer):
         self.stddev = np.sqrt(self.factor * 2.0 / n)
         return random_ops.random_normal(shape, self.mean, self.stddev,
                                         dtype, seed=self.seed)
-
-
-def _get_film_fc_scope(is_training, flags):
-    scope = slim.arg_scope(
-        [slim.fully_connected],
-        activation_fn=ACTIVATION_MAP[flags.activation],
-        normalizer_fn=None,
-        trainable=True,
-        weights_regularizer=tf.contrib.layers.l2_regularizer(scale=flags.film_weight_decay),
-        weights_initializer=ScaledVarianceRandomNormal(factor=flags.weights_initializer_factor),
-    )
-    return scope
     
     
 def _get_fc_scope(is_training, flags):
@@ -658,79 +619,11 @@ def get_distance_head(embedding_mod1, embedding_mod2, flags, is_training, scope=
         # Compute distance
         euclidian = -tf.norm(embedding_mod2_tile - embedding_mod1_tile, name='neg_euclidian_distance', axis=-1)
         return euclidian
-
-
-def get_film_layer(h, condition, flags, is_training, scope="film_layer", reuse=tf.AUTO_REUSE):
-    """
-    :param h: input layer
-    :return: conditional batch norm in the form (gamma + 1.0) * h + beta
-    """
-    activation_fn=ACTIVATION_MAP[flags.activation]
-    with tf.variable_scope(scope, reuse=reuse):
-        beta_postmultiplier = tf.get_variable(name='beta_postmultiplier', dtype=tf.float32, initializer=0.0,
-                                              trainable=True,
-                                              regularizer=tf.contrib.layers.l2_regularizer(
-                                              scale=flags.film_weight_decay_postmult,
-                                              scope='penalize_beta'))
-        gamma_postmultiplier = tf.get_variable(name='gamma_postmultiplier', dtype=tf.float32, initializer=0.0,
-                                               trainable=True,
-                                               regularizer=tf.contrib.layers.l2_regularizer(
-                                               scale=flags.film_weight_decay_postmult,
-                                               scope='penalize_gamma'))
-        with _get_film_fc_scope(is_training, flags):
-            num_filters = h.shape.as_list()[-1]
-            condition = slim.fully_connected(condition, num_outputs=num_filters, 
-                                             activation_fn=activation_fn, scope='film_hidden_layer')
-            beta = slim.fully_connected(condition, num_outputs=num_filters, activation_fn=None, scope='beta')
-            gamma = slim.fully_connected(condition, num_outputs=num_filters, activation_fn=None, scope='gamma')
-
-        beta = tf.multiply(beta_postmultiplier, beta, name='postmultiply_beta')
-        gamma = 1.0 + tf.multiply(gamma_postmultiplier, gamma, name='postmultiply_gamma')
-        
-        tf.summary.scalar('beta_weight', beta_postmultiplier)
-        tf.summary.scalar('gamma_weight', gamma_postmultiplier)
-            
-        # h[:,:,None] - Bh x F x 1
-        # tf.transpose(gamma) - F x Bc
-        # h[:,:,None] * tf.transpose(gamma) - Bh x F x Bc
-        # tf.transpose(beta)[None, :, :] - 1 x F x Bc
-        # output Bh x F x Bc
-        interaction = h[:,:,None] * tf.transpose(gamma) + tf.transpose(beta)[None, :, :]        
-        return activation_fn(interaction)
-
-
-def get_film_interactor(image_embeddings, text_embeddings, flags, is_training, scope='film_interactor', reuse=tf.AUTO_REUSE):
-    with tf.variable_scope(scope, reuse=reuse):
-        with _get_fc_scope(is_training, flags):
-            if flags.modality_interaction == "FILM_I" or flags.modality_interaction == "FILM_S":
-                image_embeddings_film = get_film_layer(image_embeddings, condition=text_embeddings, flags=flags, 
-                                                       is_training=is_training, scope="film_layer_image", reuse=reuse)
-            else:
-                image_embeddings_film = image_embeddings[:,:,None]
-            if flags.modality_interaction == "FILM_T" or flags.modality_interaction == "FILM_S":
-                text_embeddings_film = get_film_layer(text_embeddings, condition=image_embeddings, flags=flags, 
-                                                      is_training=is_training, scope="film_layer_text", reuse=reuse)
-            else:
-                text_embeddings_film = text_embeddings[:,:,None]
-            # mod1 embedding has size B1 x F x B2
-            # mod1 embedding has size B2 x F x B1
-            # This will align the modalities such that both of them have size B1 x F x B2
-            text_embeddings_film = tf.transpose(text_embeddings_film, perm=[2, 1, 0])
-            return image_embeddings_film, text_embeddings_film
-
+    
 
 def get_metric(image_embeddings, text_embeddings, flags, is_training, reuse=False):
     with tf.variable_scope('Metric', reuse=reuse):
-        # Here we compute logits of correctly matching text to a given image.
-        # We could also compute logits of correctly matching an image to a given text by reversing
-        # image_embeddings and text_embeddings
-        if flags.modality_interaction.startswith("FILM"):
-            image_embeddings_film, text_embeddings_film = get_film_interactor(image_embeddings, text_embeddings,
-                                                                    flags=flags, is_training=is_training,
-                                                                    scope='film_interactor', reuse=reuse)
-            logits = -tf.norm(image_embeddings_film - text_embeddings_film, name='neg_euclidian_distance', axis=-2)
-        else:
-            logits = get_distance_head(embedding_mod1=image_embeddings, embedding_mod2=text_embeddings,
+        logits = get_distance_head(embedding_mod1=image_embeddings, embedding_mod2=text_embeddings,
                                        flags=flags, is_training=is_training, scope='distance_head')
     return logits
 
@@ -1177,19 +1070,7 @@ def test_pretrained_inception_model(images_pl, sess):
         
 def get_consistency_loss(image_embeddings, text_embeddings, flags, labels=None):
     if flags.mi_weight:
-        image_distances = get_dist_mtx(image_embeddings)
-        text_distances = get_dist_mtx(text_embeddings)
-        
-        if flags.consistency_loss == "NMSE":
-            consistency_loss = get_rmse_loss(text_distances, image_distances, flags)
-        elif flags.consistency_loss == "MI":
-            consistency_loss = get_mi_loss(text_distances, image_distances, flags)
-        elif flags.consistency_loss == "CROSSCLASS":
-            consistency_loss = get_cross_classifier_loss(image_embeddings, text_embeddings, 
-                                                         flags, scope="crossclass_loss")
-        elif flags.consistency_loss == "SOM":
-            consistency_loss = get_som_loss(image_embeddings, text_embeddings, flags)
-        elif flags.consistency_loss == "CLASSIFIER":
+        if flags.consistency_loss == "CLASSIFIER":
             consistency_loss = get_classifier_loss(image_embeddings, text_embeddings, flags=flags, labels=labels)
         else:
             consistency_loss = tf.Variable(0.0, trainable=False, 
@@ -1213,24 +1094,17 @@ def load_data(flags):
 
 
 def get_batch(dataset_splits, flags):
-    if flags.train_scheme == "PAIRWISE":
-        if flags.image_fe_trainable:
-            images, text, text_length, match_labels = dataset_splits[flags.train_split].next_batch(
-                batch_size=flags.train_batch_size, num_images=flags.num_images, num_texts=flags.num_texts)
-            class_labels = None
-        else:
-            images, text, text_length, match_labels, class_labels = \
-                dataset_splits[flags.train_split].next_batch_features(
-                    batch_size=flags.train_batch_size, 
-                    num_images=flags.num_images, num_texts=flags.num_texts)
-    elif flags.train_scheme == "FEWSHOT":
-        if flags.image_fe_trainable:
-            raise Exception('NOT IMPLEMENTED')
-        else:
-            images, text, text_length, match_labels, class_labels = \
-                dataset_splits[flags.train_split].next_batch_fewshot(
-                    batch_size=flags.train_batch_size, 
-                    num_images=flags.num_images, num_texts=flags.num_texts)
+    
+    if flags.image_fe_trainable:
+        images, text, text_length, match_labels = dataset_splits[flags.train_split].next_batch(
+            batch_size=flags.train_batch_size, num_images=flags.num_images, num_texts=flags.num_texts)
+        class_labels = None
+    else:
+        images, text, text_length, match_labels, class_labels = \
+            dataset_splits[flags.train_split].next_batch_features(
+                batch_size=flags.train_batch_size, 
+                num_images=flags.num_images, num_texts=flags.num_texts)
+
     return images, text, text_length, match_labels, class_labels
 
     
@@ -1239,8 +1113,6 @@ def train(flags):
     flags.pretrained_model_dir = log_dir
     log_dir = os.path.join(log_dir, 'train')
     # This is setting to run evaluation loop only once
-    flags.max_number_of_evaluations = 1
-    flags.eval_interval_secs = 0
     image_size = get_image_size(flags.data_dir)
 
     # Get datasets
@@ -1321,7 +1193,7 @@ def train(flags):
                     feed_dict = {images_pl: images.astype(dtype=np.float32), text_len_pl: text_length,
                                  text_pl: text,
                                  match_labels_txt2img_pl: labels_txt2img, match_labels_img2txt_pl: labels_img2txt,
-                                 is_training: np.random.uniform() < flags.train_bn_proba}
+                                 is_training: True}
                     if labels_class is not None:
                         feed_dict.update({labels_class: class_labels})
 
@@ -1354,10 +1226,6 @@ def train(flags):
                         eval_acc(flags, datasets=dataset_splits)
 
 
-def test():
-    return None
-
-
 
 
 
@@ -1375,13 +1243,7 @@ def main(argv=None):
     pathlib.Path(log_dir).mkdir(parents=True, exist_ok=True)
     # This makes sure that we can store a json and recove a namespace back
     flags = Namespace(load_and_save_params(vars(default_params), log_dir))
-
-    if flags.mode == 'train':
-        train(flags=flags)
-    elif flags.mode == 'eval':
-        eval(flags=flags, is_primary=True)
-    elif flags.mode == 'test':
-        test(flags=flags)
+    train(flags=flags)
 
 
 if __name__ == '__main__':
