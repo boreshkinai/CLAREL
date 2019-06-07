@@ -1025,23 +1025,6 @@ def get_image_fe_restorer(flags: Namespace):
     else:
         return None
 
-
-def test_pretrained_inception_model(images_pl, sess):
-    # code to test loaded inception model
-    sample_images = ['dog.jpg', 'panda.jpg', 'tinca_tinca.jpg']
-    from PIL import Image
-    graph = tf.get_default_graph()
-    inception_logits_pl = graph.get_tensor_by_name("Model/image_feature_extractor/InceptionV3/Predictions/Reshape_1:0")
-    for image in sample_images:
-        im = Image.open(image).resize((256, 256))
-        im = np.array(im)
-        im = im.reshape(-1, 256, 256, 3).astype(np.float32)
-        im = np.tile(im, [images_pl.get_shape().as_list()[0], 1, 1, 1])
-        logit_values = sess.run(inception_logits_pl, feed_dict={images_pl: im})
-        print(image)
-        print(np.max(logit_values, axis=-1))
-        print(np.argmax(logit_values, axis=-1) - 1)
-
         
 def get_consistency_loss(image_embeddings, text_embeddings, flags, labels=None):
     if flags.mi_weight:
@@ -1151,8 +1134,7 @@ def train(flags):
         with supervisor.managed_session() as sess:
             if image_fe_restorer:
                 image_fe_restorer.restore(sess, IMAGE_MODEL_CHECKPOINTS[flags.image_feature_extractor])
-                # test_pretrained_inception_model(images_pl, sess)
-
+                
             checkpoint_step = sess.run(global_step)
             if checkpoint_step > 0:
                 checkpoint_step += 1
