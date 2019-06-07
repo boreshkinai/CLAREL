@@ -105,10 +105,7 @@ def get_arguments():
     parser.add_argument('--num_text_cnn_units', type=int, default=3)
     parser.add_argument('--num_text_cnn_blocks', type=int, default=2)
     
-    
     parser.add_argument('--embedding_size', type=int, default=1024)
-    parser.add_argument('--latent_dim', type=int, default=0)
-    parser.add_argument('--hidden_dim', type=int, default=0)
     
     # Cross modal consistency loss
     parser.add_argument('--mi_weight', type=float, default=0.5,
@@ -310,28 +307,10 @@ def get_inception_v3(images, flags, is_training=False, reuse=None, scope=None):
             h = slim.flatten(h)
     return h
 
-
-def get_encoder(h, flags, is_training, scope="encoder"):
-    with tf.variable_scope(scope, reuse=tf.AUTO_REUSE):
-        with _get_fc_scope(is_training, flags):
-            if flags.hidden_dim > 0:
-                h = slim.fully_connected(h, num_outputs=flags.hidden_dim, 
-                                         weights_regularizer=tf.contrib.layers.l2_regularizer(scale=flags.weight_decay_fc),
-                                         scope='hidden_encoder_layer')
-            if flags.latent_dim > 0:
-                h = slim.fully_connected(h, num_outputs=flags.latent_dim, 
-                                         weights_regularizer=tf.contrib.layers.l2_regularizer(scale=flags.weight_decay_fc),
-                                         scope='latent_space_layer')
-    return h
-
                 
-def get_decoder(h, flags, is_training, scope="decoder"):
+def get_projection(h, flags, is_training, scope="projection"):
     with tf.variable_scope(scope, reuse=tf.AUTO_REUSE):
         with _get_fc_scope(is_training, flags):
-            if flags.hidden_dim > 0:
-                h = slim.fully_connected(h, num_outputs=flags.hidden_dim, 
-                                         weights_regularizer=tf.contrib.layers.l2_regularizer(scale=flags.weight_decay_fc),
-                                         scope='hidden_decoder_layer')
             if flags.embedding_size > 0:
                 h = slim.fully_connected(h, num_outputs=flags.embedding_size, 
                                          activation_fn=None,
@@ -368,15 +347,13 @@ def get_image_feature_extractor(images: tf.Tensor, flags, is_training=False, sco
         h = images
 
     h = tf.reduce_mean(h, axis=1, keepdims=False)
-    
-    h = get_encoder(h, flags=flags, is_training=is_training, scope="image_encoder")
-    
+        
     conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
     with conv2d_arg_scope, dropout_arg_scope:
         if flags.dropout:
             h = slim.dropout(h, scope='image_dropout', keep_prob=1.0 - flags.dropout)
             
-    h = get_decoder(h, flags=flags, is_training=is_training, scope="image_decoder")            
+    h = get_projection(h, flags=flags, is_training=is_training, scope="image_projection")            
     return h
 
 
@@ -576,15 +553,13 @@ def get_text_feature_extractor(text, text_length, flags, embedding_initializer=N
         h = get_2016cnn_bi_lstm(text, text_length, flags=flags,
                             embedding_initializer=embedding_initializer, is_training=is_training,
                             reuse=reuse, scope=scope)
-    
-    h = get_encoder(h, flags=flags, is_training=is_training, scope="text_encoder")
-        
+            
     conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
     with conv2d_arg_scope, dropout_arg_scope:
         if flags.dropout:
             h = slim.dropout(h, scope='text_dropout', keep_prob=1.0 - flags.dropout)
 
-    h = get_decoder(h, flags=flags, is_training=is_training, scope="text_decoder")
+    h = get_projection(h, flags=flags, is_training=is_training, scope="text_projection")
     
     if len(original_shape) == 3:
         h = tf.reshape(h, shape=([-1] + [original_shape[1], h.get_shape().as_list()[-1]]))

@@ -49,8 +49,6 @@ if __name__ == "__main__":
         metric_multiplier_init=5.0,
         rnn_size=512,
         embedding_size=1024,
-        hidden_dim=0,
-        latent_dim=0,
         dropout=0.25,
         num_text_cnn_filt=256,
         num_text_cnn_blocks=2,
