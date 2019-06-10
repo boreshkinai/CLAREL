@@ -46,7 +46,6 @@ if __name__ == "__main__":
         init_learning_rate=0.1,
         lr_decay_rate=10.0,
         train_batch_size=32,
-        metric_multiplier_init=5.0,
         rnn_size=512,
         embedding_size=1024,
         dropout=0.25,
