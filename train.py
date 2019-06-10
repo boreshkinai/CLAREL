@@ -89,7 +89,7 @@ def get_arguments():
                         help='The weight of the mutual information term between text and image distances')
     parser.add_argument('--num_classes_train', type=int, default=250)
     
-    parser.add_argument('--txt2img_weight', type=float, default=0.5, help="The weight of the text to image retrieval loss")
+    parser.add_argument('--lambdaa', type=float, default=0.5, help="The weight of the text to image retrieval loss")
     
     args = parser.parse_args()
     print(args)
@@ -196,31 +196,31 @@ def train(flags):
                                                                         embedding_initializer=embedding_initializer,
                                                                         text_length=text_len_pl, flags=flags,
                                                                         is_training=True, reuse=False)
-        loss_txt2img = tf.reduce_mean(
+        loss_txt_retrieval = tf.reduce_mean(
             tf.nn.softmax_cross_entropy_with_logits_v2(logits=logits,
                                                        labels=tf.one_hot(match_labels_txt2img_pl, flags.train_batch_size)),
-            name='loss_txt2img')
-        loss_img2txt = tf.reduce_mean(
+            name='loss_txt_retrieval')
+        loss_img_retrieval = tf.reduce_mean(
             tf.nn.softmax_cross_entropy_with_logits_v2(logits=tf.transpose(logits, perm=[1, 0]),
                                                        labels=tf.one_hot(match_labels_img2txt_pl, flags.train_batch_size)),
-            name='loss_img2txt')
+            name='loss_img_retrieval')
         
         classifier_loss = get_classifier_loss(image_embeddings, text_embeddings, flags=flags, labels=labels_class)
         
         regu_losses = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
-        loss_tot = tf.add_n([flags.txt2img_weight * (1.0-flags.kappa) * loss_txt2img, 
-                             (1.0 - flags.txt2img_weight) * (1.0-flags.kappa) * loss_img2txt, 
+        loss_tot = tf.add_n([flags.lambdaa * (1.0-flags.kappa) * loss_txt_retrieval,
+                             (1.0 - flags.lambdaa) * (1.0-flags.kappa) * loss_img_retrieval,
                              classifier_loss*flags.kappa] + regu_losses)
-        misclass_txt2img = 1.0 - slim.metrics.accuracy(tf.argmax(logits, 1), match_labels_txt2img_pl)
-        misclass_img2txt = 1.0 - slim.metrics.accuracy(tf.argmax(logits, 0), match_labels_img2txt_pl)
+        misclass_txt_retrieval = 1.0 - slim.metrics.accuracy(tf.argmax(logits, 1), match_labels_txt2img_pl)
+        misclass_img_retrieval = 1.0 - slim.metrics.accuracy(tf.argmax(logits, 0), match_labels_img2txt_pl)
         main_train_op = get_main_train_op(loss_tot, global_step, flags)
 
         tf.summary.scalar('loss/total', loss_tot)
-        tf.summary.scalar('loss/txt2img', loss_txt2img)
-        tf.summary.scalar('loss/img2txt', loss_img2txt)
+        tf.summary.scalar('loss/txt_retrieval', loss_txt_retrieval)
+        tf.summary.scalar('loss/loss_img_retrieval', loss_img_retrieval)
         tf.summary.scalar('loss/classifier_loss', classifier_loss)
-        tf.summary.scalar('misclassification/txt2img', misclass_txt2img)
-        tf.summary.scalar('misclassification/img2txt', misclass_img2txt)
+        tf.summary.scalar('misclassification/txt_retrieval', misclass_txt_retrieval)
+        tf.summary.scalar('misclassification/img_retrieval', misclass_img_retrieval)
         summary = tf.summary.merge(tf.get_collection('summaries'))
 
         # Define session and logging

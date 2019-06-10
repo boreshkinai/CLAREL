@@ -56,7 +56,7 @@ if __name__ == "__main__":
         weight_decay=0.001,
         image_feature_extractor='resnet101',
         kappa=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
-        txt2img_weight=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+        lambdaa=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
     )
 
     parser = argparse.ArgumentParser()
