@@ -81,8 +81,6 @@ def get_arguments():
     # Text feature extractor
     parser.add_argument('--word_embed_dim', type=int, default=300) # this should be equal to the word2vec dimension
     parser.add_argument('--vocab_size', type=int, default=10000)
-    parser.add_argument('--text_feature_extractor', type=str, default='cnn_bi_lstm',
-                        choices=['simple_bi_lstm', 'cnn_bi_lstm', '2016cnn_bi_lstm'])
     parser.add_argument('--text_maxlen', type=int, default=30, help='Maximal length of the text description in tokens')
     parser.add_argument('--shuffle_text_in_batch', type=bool, default=False)
     parser.add_argument('--rnn_size', type=int, default=512)
@@ -95,8 +93,7 @@ def get_arguments():
                         help='The weight of the mutual information term between text and image distances')
     parser.add_argument('--consistency_loss', type=str, default="CLASSIFIER", choices=[None, "CLASSIFIER"])
     parser.add_argument('--num_classes_train', type=int, default=250)
-    parser.add_argument('--weight_decay_fc', type=float, default=0.001)
-        
+    
     parser.add_argument('--txt2img_weight', type=float, default=0.5, help="The weight of the text to image retrieval loss")
     
     args = parser.parse_args()

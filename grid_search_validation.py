@@ -53,7 +53,6 @@ if __name__ == "__main__":
         num_text_cnn_filt=256,
         num_text_cnn_blocks=2,
         num_text_cnn_units=3,
-        text_feature_extractor=['cnn_bi_lstm'],
         weight_decay=0.001,
         image_feature_extractor='resnet101',
         consistency_loss="CLASSIFIER",

@@ -163,66 +163,6 @@ def get_image_feature_extractor(images: tf.Tensor, flags, is_training=False, sco
     return h
 
 
-def get_2016cnn_bi_lstm(text, text_length, flags, embedding_initializer=None,
-                    is_training=False, scope='text_feature_extractor', reuse=None):
-    """
-
-    :param text: input text sequence, BTC
-    :param text_length:  lengths of sequences in the batch, B
-    :param flags:  general settings of the overall architecture
-    :param is_training:
-    :param scope:
-    :param reuse:
-    :return: the text embedding, BC
-    """
-    activation_fn = ACTIVATION_MAP[flags.activation]
-    with tf.variable_scope(scope, reuse=reuse):
-        if embedding_initializer is not None:
-            word_embed_dim = None
-            vocab_size = None
-        else:
-            word_embed_dim = flags.word_embed_dim
-            vocab_size = flags.vocab_size
-        h = tf.contrib.layers.embed_sequence(text,
-                                             vocab_size=vocab_size,
-                                             initializer=embedding_initializer,
-                                             embed_dim=word_embed_dim,
-                                             trainable=False,
-                                             reuse=tf.AUTO_REUSE,
-                                             scope='TextEmbedding')
-
-        h = tf.expand_dims(h, 1)
-        conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
-        with conv2d_arg_scope, dropout_arg_scope:
-
-            h = slim.conv2d(h, num_outputs=flags.num_text_cnn_filt, kernel_size=[1, 3],
-                            stride=1, scope='text_conv_1', padding='VALID', activation_fn=activation_fn)
-            h = slim.conv2d(h, num_outputs=flags.num_text_cnn_filt, kernel_size=[1, 2],
-                            stride=1, scope='text_conv_2', padding='VALID', activation_fn=activation_fn)
-
-            h = slim.max_pool2d(h, kernel_size=[1, 3], stride=[1, 3], padding='VALID',
-                                scope='text_max_pool_x3')
-
-            h = slim.conv2d(h, num_outputs=flags.num_text_cnn_filt, kernel_size=[1, 2],
-                            stride=1, scope='text_conv_3', padding='VALID', activation_fn=activation_fn)
-
-            text_length = tf.cast(tf.ceil(tf.div(tf.cast(text_length, tf.float32), 3.0)), text_length.dtype)
-
-        h = tf.squeeze(h, [1])
-
-        cells_fw = [tf.nn.rnn_cell.LSTMCell(size) for size in [flags.rnn_size]]
-        cells_bw = [tf.nn.rnn_cell.LSTMCell(size) for size in [flags.rnn_size]]
-        h, *_ = tf.contrib.rnn.stack_bidirectional_dynamic_rnn(cells_fw=cells_fw, cells_bw=cells_bw,
-                                                               inputs=h, dtype=tf.float32,
-                                                               sequence_length=text_length)
-
-        mask = tf.expand_dims(tf.sequence_mask(text_length,
-                                               maxlen=h.get_shape().as_list()[1], dtype=tf.float32), axis=-1)
-        h = tf.reduce_sum(tf.multiply(h, mask), axis=[1]) / tf.reduce_sum(mask, axis=[1])
-        
-    return h
-
-
 def get_cnn_bi_lstm(text, text_length, flags, embedding_initializer=None,
                        is_training=False, scope='text_feature_extractor', reuse=None):
     """
@@ -283,48 +223,6 @@ def get_cnn_bi_lstm(text, text_length, flags, embedding_initializer=None,
     return h
 
 
-def get_simple_bi_lstm(text, text_length, flags, embedding_initializer=None,
-                       is_training=False, scope='text_feature_extractor', reuse=None):
-    """
-
-    :param text: input text sequence, BTC
-    :param text_length:  lengths of sequences in the batch, B
-    :param flags:  general settings of the overall architecture
-    :param is_training:
-    :param scope:
-    :param reuse:
-    :return: the text embedding, BC
-    """
-
-    with tf.variable_scope(scope, reuse=reuse):
-        if embedding_initializer is not None:
-            word_embed_dim = None
-            vocab_size = None
-        else:
-            word_embed_dim = flags.word_embed_dim
-            vocab_size = flags.vocab_size
-        h = tf.contrib.layers.embed_sequence(text,
-                                             vocab_size=vocab_size,
-                                             initializer=embedding_initializer,
-                                             embed_dim=word_embed_dim,
-                                             trainable=False,
-                                             reuse=tf.AUTO_REUSE,
-                                             scope='TextEmbedding')
-
-        cells_fw = [tf.nn.rnn_cell.LSTMCell(size) for size in [flags.rnn_size]]
-        cells_bw = [tf.nn.rnn_cell.LSTMCell(size) for size in [flags.rnn_size]]
-
-        h, *_ = tf.contrib.rnn.stack_bidirectional_dynamic_rnn(cells_fw=cells_fw,
-                                                               cells_bw=cells_bw,
-                                                               inputs=h,
-                                                               dtype=tf.float32,
-                                                               sequence_length=text_length)
-        mask = tf.expand_dims(tf.sequence_mask(text_length, maxlen=tf.shape(text)[1], dtype=tf.float32), axis=-1)
-        h = tf.reduce_sum(tf.multiply(h, mask), axis=[1]) / tf.reduce_sum(mask, axis=[1])
-                
-    return h
-
-
 def get_text_feature_extractor(text, text_length, flags, embedding_initializer=None,
                                is_training=False, scope='text_feature_extractor', reuse=None):
     """
@@ -342,19 +240,10 @@ def get_text_feature_extractor(text, text_length, flags, embedding_initializer=N
     if len(original_shape) == 3:
         text = tf.reshape(text, shape=([-1]+original_shape[2:]))
         text_length = tf.reshape(text_length, shape=[-1])
-
-    if flags.text_feature_extractor == 'simple_bi_lstm':
-        h = get_simple_bi_lstm(text, text_length, flags=flags,
-                               embedding_initializer=embedding_initializer, is_training=is_training,
-                               reuse=reuse, scope=scope)
-    elif flags.text_feature_extractor == 'cnn_bi_lstm':
-        h = get_cnn_bi_lstm(text, text_length, flags=flags,
-                               embedding_initializer=embedding_initializer, is_training=is_training,
-                               reuse=reuse, scope=scope)
-    elif flags.text_feature_extractor == '2016cnn_bi_lstm':
-        h = get_2016cnn_bi_lstm(text, text_length, flags=flags,
-                            embedding_initializer=embedding_initializer, is_training=is_training,
-                            reuse=reuse, scope=scope)
+        
+    h = get_cnn_bi_lstm(text, text_length, flags=flags,
+                        embedding_initializer=embedding_initializer, is_training=is_training,
+                        reuse=reuse, scope=scope)
             
     conv2d_arg_scope, dropout_arg_scope = _get_scope(is_training, flags)
     with conv2d_arg_scope, dropout_arg_scope:
