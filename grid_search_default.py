@@ -55,8 +55,7 @@ if __name__ == "__main__":
         num_text_cnn_units=3,
         weight_decay=0.001,
         image_feature_extractor='resnet101',
-        consistency_loss="CLASSIFIER",
-        mi_weight=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+        kappa=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
         txt2img_weight=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
     )
 

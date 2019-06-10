@@ -350,12 +350,8 @@ def get_input_placeholders(batch_size_image: int = 32, batch_size_text: int = No
         text_length_placeholder = tf.placeholder(shape=(batch_size_text, num_texts), name='text_len', dtype=tf.int32)
         labels_txt2img = tf.placeholder(tf.int64, shape=(batch_size_text,), name='match_labels_txt2img')
         labels_img2txt = tf.placeholder(tf.int64, shape=(batch_size_image,), name='match_labels_img2txt')
-        if flags.consistency_loss == "CLASSIFIER":
-            labels_class = tf.placeholder(tf.int64, shape=(batch_size_image,), name='class_labels')
-        else:
-            labels_class = None
-        
-        return images_placeholder, text_placeholder, text_length_placeholder, labels_txt2img, labels_img2txt, labels_class
+        labels_class = tf.placeholder(tf.int64, shape=(batch_size_image,), name='class_labels')
+    return images_placeholder, text_placeholder, text_length_placeholder, labels_txt2img, labels_img2txt, labels_class
 
 
 def get_image_size(data_dir: str):
@@ -657,15 +653,3 @@ class ModelLoader:
         return metrics, embeddings
     
     
-def get_consistency_loss(image_embeddings, text_embeddings, flags, labels=None):
-    if flags.mi_weight:
-        if flags.consistency_loss == "CLASSIFIER":
-            consistency_loss = get_classifier_loss(image_embeddings, text_embeddings, flags=flags, labels=labels)
-        else:
-            consistency_loss = tf.Variable(0.0, trainable=False, 
-                                           name='dummy_consistency_loss', dtype=tf.float32)
-        tf.summary.scalar('loss/consistency_loss', consistency_loss)
-        consistency_loss = consistency_loss
-    else:
-        consistency_loss = 0.0
-    return consistency_loss

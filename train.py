@@ -22,9 +22,8 @@ from common.util import Namespace
 from datasets import Dataset
 from datasets.dataset_list import get_dataset_splits
 from common.pretrained_models import IMAGE_MODEL_CHECKPOINTS, get_image_fe_restorer
-from model.model import ModelLoader, get_main_train_op, get_input_placeholders, get_inference_graph, \
-                        get_consistency_loss, get_image_size
-
+from model.model import ModelLoader, get_main_train_op, get_input_placeholders, get_inference_graph, get_image_size
+from common.losses import get_classifier_loss
 
 tf.logging.set_verbosity(tf.logging.INFO)
 logging.basicConfig(level=logging.INFO)
@@ -52,9 +51,9 @@ def get_arguments():
     parser.add_argument('--num_images', type=int, default=1, help='Number of image samples per image/text pair.')
     parser.add_argument('--num_texts', type=int, default=10, help='Number of text samples per image/text pair.')
     parser.add_argument('--save_summaries_secs', type=int, default=60, help='Time between saving summaries')
-    parser.add_argument('--optimizer', type=str, default='sgd', choices=['sgd', 'adam'])
     parser.add_argument('--augment', type=bool, default=False)
-    # Learning rate paramteres
+    # Optimizer parameters
+    parser.add_argument('--optimizer', type=str, default='sgd', choices=['sgd', 'adam'])
     parser.add_argument('--init_learning_rate', type=float, default=0.1, help='Initial learning rate.')
     parser.add_argument('--lr_anneal', type=str, default='exp', choices=['exp'])
     parser.add_argument('--n_lr_decay', type=int, default=3)
@@ -67,9 +66,6 @@ def get_arguments():
                         help='Number of train steps between evaluating model in the training loop')
     parser.add_argument('--num_samples_eval', type=int, default=100, help='Number of evaluation samples?')
     parser.add_argument('--eval_batch_size', type=int, default=32, help='Evaluation batch size?')
-    # Test parameters
-    parser.add_argument('--pretrained_model_dir', type=str, default='./logs/',
-                        help='Path to the pretrained model to run the nearest neigbor baseline test.')
     # Architecture parameters
     parser.add_argument('--dropout', type=float, default=0.25)
     parser.add_argument('--weight_decay', type=float, default=0.001)
@@ -88,10 +84,9 @@ def get_arguments():
     parser.add_argument('--num_text_cnn_units', type=int, default=3)
     parser.add_argument('--num_text_cnn_blocks', type=int, default=2)
     
-    # Cross modal consistency loss
-    parser.add_argument('--mi_weight', type=float, default=0.5,
+    # Classifier loss
+    parser.add_argument('--kappa', type=float, default=0.5,
                         help='The weight of the mutual information term between text and image distances')
-    parser.add_argument('--consistency_loss', type=str, default="CLASSIFIER", choices=[None, "CLASSIFIER"])
     parser.add_argument('--num_classes_train', type=int, default=250)
     
     parser.add_argument('--txt2img_weight', type=float, default=0.5, help="The weight of the text to image retrieval loss")
@@ -130,7 +125,7 @@ def get_logdir_name(flags):
 
 def eval_acc_batch(flags: Namespace, datasets: Dict[str, Dataset]):
     max_text_len = list(datasets.values())[0].max_text_len
-    model = ModelLoader(model_path=flags.pretrained_model_dir, batch_size=flags.eval_batch_size,
+    model = ModelLoader(model_path=flags.model_path, batch_size=flags.eval_batch_size,
                         num_images=flags.num_images, num_texts=flags.num_texts, max_text_len=max_text_len)
     results = {}
     for data_name, dataset in datasets.items():
@@ -146,7 +141,7 @@ def eval_acc_batch(flags: Namespace, datasets: Dict[str, Dataset]):
 
 def eval_acc(flags: Namespace, datasets: Dict[str, Dataset]):
     max_text_len = list(datasets.values())[0].max_text_len
-    model = ModelLoader(model_path=flags.pretrained_model_dir, 
+    model = ModelLoader(model_path=flags.model_path, 
                     batch_size=None, num_images=10, num_texts=10, max_text_len=max_text_len)
     
     if flags.split_type == "GZSL":
@@ -178,7 +173,7 @@ def load_data(flags):
     
 def train(flags):
     log_dir = get_logdir_name(flags)
-    flags.pretrained_model_dir = log_dir
+    flags.model_path = log_dir
     log_dir = os.path.join(log_dir, 'train')
     image_size = get_image_size(flags.data_dir)
 
@@ -210,13 +205,12 @@ def train(flags):
                                                        labels=tf.one_hot(match_labels_img2txt_pl, flags.train_batch_size)),
             name='loss_img2txt')
         
-        mi_weight = tf.Variable(0.0, trainable=False, name='mi_weight', dtype=tf.float32)
-        consistency_loss = get_consistency_loss(image_embeddings, text_embeddings, flags, labels=labels_class)
+        classifier_loss = get_classifier_loss(image_embeddings, text_embeddings, flags=flags, labels=labels_class)
         
         regu_losses = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
-        loss_tot = tf.add_n([flags.txt2img_weight * (1.0-mi_weight) * loss_txt2img, 
-                             (1.0 - flags.txt2img_weight) * (1.0-mi_weight) * loss_img2txt, 
-                             consistency_loss*mi_weight] + regu_losses)
+        loss_tot = tf.add_n([flags.txt2img_weight * (1.0-flags.kappa) * loss_txt2img, 
+                             (1.0 - flags.txt2img_weight) * (1.0-flags.kappa) * loss_img2txt, 
+                             classifier_loss*flags.kappa] + regu_losses)
         misclass_txt2img = 1.0 - slim.metrics.accuracy(tf.argmax(logits, 1), match_labels_txt2img_pl)
         misclass_img2txt = 1.0 - slim.metrics.accuracy(tf.argmax(logits, 0), match_labels_img2txt_pl)
         main_train_op = get_main_train_op(loss_tot, global_step, flags)
@@ -224,6 +218,7 @@ def train(flags):
         tf.summary.scalar('loss/total', loss_tot)
         tf.summary.scalar('loss/txt2img', loss_txt2img)
         tf.summary.scalar('loss/img2txt', loss_img2txt)
+        tf.summary.scalar('loss/classifier_loss', classifier_loss)
         tf.summary.scalar('misclassification/txt2img', misclass_txt2img)
         tf.summary.scalar('misclassification/img2txt', misclass_img2txt)
         summary = tf.summary.merge(tf.get_collection('summaries'))
@@ -259,17 +254,10 @@ def train(flags):
                     labels_txt2img, labels_img2txt = match_labels
                     dt_batch = time.time() - dt_batch
                     
-                    feed_dict = {images_pl: images.astype(dtype=np.float32), text_len_pl: text_length,
-                                 text_pl: text,
+                    feed_dict = {images_pl: images.astype(dtype=np.float32), 
+                                 text_len_pl: text_length, text_pl: text,
                                  match_labels_txt2img_pl: labels_txt2img, match_labels_img2txt_pl: labels_img2txt,
-                                 is_training: True}
-                    if labels_class is not None:
-                        feed_dict.update({labels_class: class_labels})
-
-                    if flags.mi_weight:
-                        feed_dict.update({mi_weight: flags.mi_weight})
-                    else:
-                        feed_dict.update({mi_weight: -1e-5})
+                                 is_training: True, labels_class: class_labels}
 
                     if step % 100 == 0:
                         summary_str = sess.run(summary, feed_dict=feed_dict)
