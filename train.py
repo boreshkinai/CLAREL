@@ -22,7 +22,8 @@ from common.util import Namespace
 from datasets import Dataset
 from datasets.dataset_list import get_dataset_splits
 from common.pretrained_models import IMAGE_MODEL_CHECKPOINTS, get_image_fe_restorer
-from model.model import ModelLoader, get_main_train_op, get_input_placeholders, get_inference_graph, get_image_size
+from model.model_loader import ModelLoader
+from model.model import get_main_train_op, get_input_placeholders, get_inference_graph, get_image_size
 from common.losses import get_classifier_loss
 
 tf.logging.set_verbosity(tf.logging.INFO)
@@ -267,10 +268,10 @@ def train(flags):
                             "step %d, loss : %.4g, dt: %.3gs, dt_batch: %.3gs" % (step, loss_tot, dt_train, dt_batch))
 
                     if step % 100 == 0:
-                        logits_img2txt = sess.run(logits, feed_dict=feed_dict)
-                        logits_img2txt = np.argmax(logits_img2txt, axis=0)
-                        num_matches = float(sum(labels_img2txt == logits_img2txt))
-                        logging.info("img2txt acc: %.3g" % (num_matches / flags.train_batch_size))
+                        logits_text_retrieval = sess.run(logits, feed_dict=feed_dict)
+                        logits_text_retrieval = np.argmax(logits_text_retrieval, axis=0)
+                        num_matches = float(sum(labels_img2txt == logits_text_retrieval))
+                        logging.info("text retrieval acc: %.3g" % (num_matches / flags.train_batch_size))
 
                     t_train = time.time()
                     loss_tot = sess.run(main_train_op, feed_dict=feed_dict)
