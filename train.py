@@ -7,7 +7,6 @@ from __future__ import print_function
 
 import os
 import numpy as np
-import math
 import argparse
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
@@ -16,14 +15,13 @@ import logging
 from common.util import summary_writer
 from common.gen_experiments import load_and_save_params
 import time
-from tqdm import tqdm, trange
 from typing import List, Dict, Set
 from common.util import Namespace
 from datasets import Dataset
 from datasets.dataset_list import get_dataset_splits
 from common.pretrained_models import IMAGE_MODEL_CHECKPOINTS, get_image_fe_restorer
 from model.model_loader import ModelLoader
-from model.model import get_main_train_op, get_input_placeholders, get_inference_graph, get_image_size
+from model.model import Model
 from common.losses import get_classifier_loss
 
 tf.logging.set_verbosity(tf.logging.INFO)
@@ -176,45 +174,43 @@ def train(flags):
     log_dir = get_logdir_name(flags)
     flags.model_path = log_dir
     log_dir = os.path.join(log_dir, 'train')
-    image_size = get_image_size(flags.data_dir)
 
     # Get datasets
     dataset_splits = load_data(flags)
     max_text_len = dataset_splits[flags.train_split].max_text_len
     with tf.Graph().as_default():
         global_step = tf.Variable(0, trainable=False, name='global_step', dtype=tf.int64)
-        is_training = tf.Variable(True, trainable=False, name='is_training', dtype=tf.bool)
-        images_pl, text_pl, text_len_pl, match_labels_txt2img_pl, match_labels_img2txt_pl, labels_class = \
-            get_input_placeholders(batch_size_image=flags.train_batch_size,
-                                   num_images=flags.num_images, num_texts=flags.num_texts,
-                                   image_size=image_size, max_text_len=max_text_len,
-                                   flags=flags, scope='inputs')
 
         embedding_initializer = np.zeros(shape=(flags.vocab_size, flags.word_embed_dim), dtype=np.float32)
         vocab = dataset_splits[flags.train_split].word_vectors_idx
         embedding_initializer[:len(vocab)] = vocab
-        logits, image_embeddings, text_embeddings = get_inference_graph(images=images_pl, text=text_pl,
-                                                                        embedding_initializer=embedding_initializer,
-                                                                        text_length=text_len_pl, flags=flags,
-                                                                        is_training=True, reuse=False)
+
+        model = Model(flags=flags, is_training=True, embedding_initializer=embedding_initializer)
+
+        model.get_input_placeholders(batch_size_image=flags.train_batch_size, num_images=flags.num_images,
+                                     num_texts=flags.num_texts, max_text_len=max_text_len, scope='inputs')
+
+        model.get_inference_graph(reuse=False)
+
         loss_txt_retrieval = tf.reduce_mean(
-            tf.nn.softmax_cross_entropy_with_logits_v2(logits=logits,
-                                                       labels=tf.one_hot(match_labels_txt2img_pl, flags.train_batch_size)),
+            tf.nn.softmax_cross_entropy_with_logits_v2(logits=model.logits,
+                                                       labels=tf.one_hot(model.labels_txt2img, flags.train_batch_size)),
             name='loss_txt_retrieval')
         loss_img_retrieval = tf.reduce_mean(
-            tf.nn.softmax_cross_entropy_with_logits_v2(logits=tf.transpose(logits, perm=[1, 0]),
-                                                       labels=tf.one_hot(match_labels_img2txt_pl, flags.train_batch_size)),
+            tf.nn.softmax_cross_entropy_with_logits_v2(logits=tf.transpose(model.logits, perm=[1, 0]),
+                                                       labels=tf.one_hot(model.labels_img2txt, flags.train_batch_size)),
             name='loss_img_retrieval')
         
-        classifier_loss = get_classifier_loss(image_embeddings, text_embeddings, flags=flags, labels=labels_class)
+        classifier_loss = get_classifier_loss(model.image_embeddings, model.text_embeddings,
+                                              flags=flags, labels=model.labels_class)
         
         regu_losses = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
         loss_tot = tf.add_n([flags.lambdaa * (1.0-flags.kappa) * loss_txt_retrieval,
                              (1.0 - flags.lambdaa) * (1.0-flags.kappa) * loss_img_retrieval,
                              classifier_loss*flags.kappa] + regu_losses)
-        misclass_txt_retrieval = 1.0 - slim.metrics.accuracy(tf.argmax(logits, 1), match_labels_txt2img_pl)
-        misclass_img_retrieval = 1.0 - slim.metrics.accuracy(tf.argmax(logits, 0), match_labels_img2txt_pl)
-        main_train_op = get_main_train_op(loss_tot, global_step, flags)
+        misclass_txt_retrieval = 1.0 - slim.metrics.accuracy(tf.argmax(model.logits, 1), model.labels_txt2img)
+        misclass_img_retrieval = 1.0 - slim.metrics.accuracy(tf.argmax(model.logits, 0), model.labels_img2txt)
+        main_train_op = model.get_main_train_op(loss_tot, global_step)
 
         tf.summary.scalar('loss/total', loss_tot)
         tf.summary.scalar('loss/txt_retrieval', loss_txt_retrieval)
@@ -255,10 +251,10 @@ def train(flags):
                     labels_txt2img, labels_img2txt = match_labels
                     dt_batch = time.time() - dt_batch
                     
-                    feed_dict = {images_pl: images.astype(dtype=np.float32), 
-                                 text_len_pl: text_length, text_pl: text,
-                                 match_labels_txt2img_pl: labels_txt2img, match_labels_img2txt_pl: labels_img2txt,
-                                 is_training: True, labels_class: class_labels}
+                    feed_dict = {model.images: images.astype(dtype=np.float32),
+                                 model.text_length: text_length, model.text: text,
+                                 model.labels_txt2img: labels_txt2img, model.labels_img2txt: labels_img2txt,
+                                 model.labels_class: class_labels}
 
                     if step % 100 == 0:
                         summary_str = sess.run(summary, feed_dict=feed_dict)
@@ -268,7 +264,7 @@ def train(flags):
                             "step %d, loss : %.4g, dt: %.3gs, dt_batch: %.3gs" % (step, loss_tot, dt_train, dt_batch))
 
                     if step % 100 == 0:
-                        logits_text_retrieval = sess.run(logits, feed_dict=feed_dict)
+                        logits_text_retrieval = sess.run(model.logits, feed_dict=feed_dict)
                         logits_text_retrieval = np.argmax(logits_text_retrieval, axis=0)
                         num_matches = float(sum(labels_img2txt == logits_text_retrieval))
                         logging.info("text retrieval acc: %.3g" % (num_matches / flags.train_batch_size))
