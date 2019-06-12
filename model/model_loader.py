@@ -11,7 +11,7 @@ from typing import List, Dict, Set
 from common.util import Namespace
 from datasets import Dataset
 from common.metrics import ap_at_k_prototypes, top1_gzsl
-from model.model import get_input_placeholders, get_inference_graph, get_image_size, get_embeddings, get_metric
+from model.model import Model
 
 
 tf.logging.set_verbosity(tf.logging.INFO)
@@ -31,9 +31,9 @@ class MetricLoader:
 
         with tf.Graph().as_default():
             self.get_metric_input_placeholders()
+            model = Model(flags=flags, is_training=False)
             # - is because we use negative distance for logits
-            self.logits = -get_metric(self.image_embeddings, self.text_embeddings,
-                                      flags=self.flags, is_training=False, reuse=False)
+            self.logits = -model.get_metric(self.image_embeddings, self.text_embeddings)
             
             config = tf.ConfigProto(allow_soft_placement=True)
             config.gpu_options.allow_growth = True
@@ -87,26 +87,23 @@ class ModelLoader:
         step = int(os.path.basename(latest_checkpoint).split('-')[1])
 
         flags = Namespace(load_and_save_params(default_params=dict(), exp_dir=model_path))
-        image_size = get_image_size(flags.data_dir)
-
         with tf.Graph().as_default():
-            images_pl, text_pl, text_len_pl, match_labels_txt2img, match_labels_img2txt, _ = get_input_placeholders(
-                batch_size_image=batch_size, num_images=num_images, num_texts=num_texts, max_text_len=max_text_len,
-                image_size=image_size, flags=flags, scope='inputs')
+
+            model = Model(flags=flags, is_training=False)
+            model.get_input_placeholders(batch_size_image=batch_size, num_images=num_images,
+                                         num_texts=num_texts, max_text_len=max_text_len, scope='inputs')
             if batch_size:
-                logits, image_embeddings, text_embeddings = get_inference_graph(
-                    images=images_pl, text=text_pl, text_length=text_len_pl, flags=flags, is_training=False)
-                self.logits=logits
+                model.get_inference_graph()
+                self.logits=model.logits
             else:
-                image_embeddings, text_embeddings = get_embeddings(
-                    images=images_pl, text=text_pl, text_length=text_len_pl, flags=flags, is_training=False)
-            self.images_pl = images_pl
-            self.text_pl = text_pl
-            self.text_len_pl = text_len_pl
-            self.match_labels_txt2img_pl = match_labels_txt2img
-            self.match_labels_img2txt_pl = match_labels_img2txt
-            self.image_embeddings = image_embeddings
-            self.text_embeddings = text_embeddings
+                model.get_embeddings()
+            self.images_pl = model.images
+            self.text_pl = model.text
+            self.text_len_pl = model.text_length
+            self.match_labels_txt2img_pl = model.labels_txt2img
+            self.match_labels_img2txt_pl = model.labels_txt2img
+            self.image_embeddings = model.image_embeddings
+            self.text_embeddings = model.text_embeddings
 
             init_fn = slim.assign_from_checkpoint_fn(latest_checkpoint, tf.global_variables())
 

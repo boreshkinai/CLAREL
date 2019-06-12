@@ -17,16 +17,6 @@ tf.logging.set_verbosity(tf.logging.INFO)
 logging.basicConfig(level=logging.INFO)
 
 
-def get_image_size(data_dir: str):
-    """ Generates image size based on the dataset directory name
-
-    :param data_dir: path to the data
-    :return: image size
-    """
-
-    return 299
-
-
 class ScaledVarianceRandomNormal(init_ops.Initializer):
     """Initializer that generates tensors with a normal distribution scaled as per https://arxiv.org/pdf/1502.01852.pdf.
     Args:
