@@ -2,12 +2,9 @@ import os
 import numpy as np
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
-import pathlib
 import logging
 from common.gen_experiments import load_and_save_params
-import time
 from tqdm import tqdm, trange
-from typing import List, Dict, Set
 from common.util import Namespace
 from datasets import Dataset
 from common.metrics import ap_at_k_prototypes, top1_gzsl

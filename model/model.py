@@ -8,7 +8,6 @@ from tensorflow.python.framework import dtypes
 from common.util import ACTIVATION_MAP
 import logging
 from tensorflow.contrib.slim.nets import inception
-from typing import List, Dict, Set
 from common.util import Namespace
 from common.losses import get_classifier_loss
 
