@@ -315,7 +315,7 @@ class Model:
     def get_losses(self):
         self.loss_txt_retrieval = tf.reduce_mean(
             tf.nn.softmax_cross_entropy_with_logits_v2(logits=self.logits,
-                                                       labels=tf.one_hot(self.labels_txt2img, self.train_batch_size)),
+                                                       labels=tf.one_hot(self.labels_txt2img, self.flags.train_batch_size)),
             name='loss_txt_retrieval')
         self.loss_img_retrieval = tf.reduce_mean(
             tf.nn.softmax_cross_entropy_with_logits_v2(logits=tf.transpose(self.logits, perm=[1, 0]),
