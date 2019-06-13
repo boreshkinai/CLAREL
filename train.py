@@ -9,7 +9,6 @@ import os
 import numpy as np
 import argparse
 import tensorflow as tf
-import tensorflow.contrib.slim as slim
 import pathlib
 import logging
 from common.util import summary_writer
@@ -19,10 +18,8 @@ from typing import List, Dict, Set
 from common.util import Namespace
 from datasets import Dataset
 from datasets.dataset_list import get_dataset_splits
-from common.pretrained_models import IMAGE_MODEL_CHECKPOINTS, get_image_fe_restorer
 from model.model_loader import ModelLoader
 from model.model import Model
-from common.losses import get_classifier_loss
 
 tf.logging.set_verbosity(tf.logging.INFO)
 logging.basicConfig(level=logging.INFO)
@@ -174,75 +171,52 @@ def train(flags):
     log_dir = get_logdir_name(flags)
     flags.model_path = log_dir
     log_dir = os.path.join(log_dir, 'train')
-
+    #
     # Get datasets
+    #
     dataset_splits = load_data(flags)
     max_text_len = dataset_splits[flags.train_split].max_text_len
     with tf.Graph().as_default():
-        global_step = tf.Variable(0, trainable=False, name='global_step', dtype=tf.int64)
 
         embedding_initializer = np.zeros(shape=(flags.vocab_size, flags.word_embed_dim), dtype=np.float32)
         vocab = dataset_splits[flags.train_split].word_vectors_idx
         embedding_initializer[:len(vocab)] = vocab
-
+        #
+        # Build model graph
+        #
         model = Model(flags=flags, is_training=True, embedding_initializer=embedding_initializer)
-
         model.get_input_placeholders(batch_size_image=flags.train_batch_size, num_images=flags.num_images,
                                      num_texts=flags.num_texts, max_text_len=max_text_len, scope='inputs')
-
         model.get_inference_graph(reuse=False)
-
-        loss_txt_retrieval = tf.reduce_mean(
-            tf.nn.softmax_cross_entropy_with_logits_v2(logits=model.logits,
-                                                       labels=tf.one_hot(model.labels_txt2img, flags.train_batch_size)),
-            name='loss_txt_retrieval')
-        loss_img_retrieval = tf.reduce_mean(
-            tf.nn.softmax_cross_entropy_with_logits_v2(logits=tf.transpose(model.logits, perm=[1, 0]),
-                                                       labels=tf.one_hot(model.labels_img2txt, flags.train_batch_size)),
-            name='loss_img_retrieval')
-        
-        classifier_loss = get_classifier_loss(model.image_embeddings, model.text_embeddings,
-                                              flags=flags, labels=model.labels_class)
-        
-        regu_losses = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
-        loss_tot = tf.add_n([flags.lambdaa * (1.0-flags.kappa) * loss_txt_retrieval,
-                             (1.0 - flags.lambdaa) * (1.0-flags.kappa) * loss_img_retrieval,
-                             classifier_loss*flags.kappa] + regu_losses)
-        misclass_txt_retrieval = 1.0 - slim.metrics.accuracy(tf.argmax(model.logits, 1), model.labels_txt2img)
-        misclass_img_retrieval = 1.0 - slim.metrics.accuracy(tf.argmax(model.logits, 0), model.labels_img2txt)
-        main_train_op = model.get_main_train_op(loss_tot, global_step)
-
-        tf.summary.scalar('loss/total', loss_tot)
-        tf.summary.scalar('loss/txt_retrieval', loss_txt_retrieval)
-        tf.summary.scalar('loss/loss_img_retrieval', loss_img_retrieval)
-        tf.summary.scalar('loss/classifier_loss', classifier_loss)
-        tf.summary.scalar('misclassification/txt_retrieval', misclass_txt_retrieval)
-        tf.summary.scalar('misclassification/img_retrieval', misclass_img_retrieval)
-        summary = tf.summary.merge(tf.get_collection('summaries'))
-
+        model.get_losses()
+        main_train_op = model.get_main_train_op()
+        summary = model.get_summaries()
+        #
         # Define session and logging
-        summary_writer = tf.summary.FileWriter(log_dir, flush_secs=1)
+        #
+        summary_file_writer = tf.summary.FileWriter(log_dir, flush_secs=1)
         saver = tf.train.Saver(max_to_keep=1, save_relative_paths=True)
-        image_fe_restorer = get_image_fe_restorer(flags=flags)
         supervisor = tf.train.Supervisor(logdir=log_dir, init_feed_dict=None,
                                          summary_op=None,
                                          init_op=tf.global_variables_initializer(),
-                                         summary_writer=summary_writer,
+                                         summary_writer=summary_file_writer,
                                          saver=saver,
-                                         global_step=global_step, save_summaries_secs=flags.save_summaries_secs,
+                                         global_step=model.global_step, save_summaries_secs=flags.save_summaries_secs,
                                          save_model_secs=0)
-
         with supervisor.managed_session() as sess:
-            if image_fe_restorer:
-                image_fe_restorer.restore(sess, IMAGE_MODEL_CHECKPOINTS[flags.image_feature_extractor])
-                
-            checkpoint_step = sess.run(global_step)
+            #
+            # Main training loop
+            #
+            checkpoint_step = sess.run(model.global_step)
             if checkpoint_step > 0:
                 checkpoint_step += 1
 
             loss_tot, dt_train = 0.0, 0.0
             for step in range(checkpoint_step, flags.number_of_steps):
                 with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+                    #
+                    # Sample batch
+                    #
                     dt_batch = time.time()
                     images, text, text_length, match_labels, class_labels = \
                         dataset_splits[flags.train_split].next_batch_features(
@@ -255,25 +229,28 @@ def train(flags):
                                  model.text_length: text_length, model.text: text,
                                  model.labels_txt2img: labels_txt2img, model.labels_img2txt: labels_img2txt,
                                  model.labels_class: class_labels}
-
+                    #
+                    # Run summaries and logging
+                    #
                     if step % 100 == 0:
                         summary_str = sess.run(summary, feed_dict=feed_dict)
-                        summary_writer.add_summary(summary_str, step)
-                        summary_writer.flush()
+                        summary_file_writer.add_summary(summary_str, step)
+                        summary_file_writer.flush()
                         logging.info(
                             "step %d, loss : %.4g, dt: %.3gs, dt_batch: %.3gs" % (step, loss_tot, dt_train, dt_batch))
-
-                    if step % 100 == 0:
                         logits_text_retrieval = sess.run(model.logits, feed_dict=feed_dict)
                         logits_text_retrieval = np.argmax(logits_text_retrieval, axis=0)
                         num_matches = float(sum(labels_img2txt == logits_text_retrieval))
                         logging.info("text retrieval acc: %.3g" % (num_matches / flags.train_batch_size))
-
+                    #
+                    # Run main train operation
+                    #
                     t_train = time.time()
                     loss_tot = sess.run(main_train_op, feed_dict=feed_dict)
                     dt_train = time.time() - t_train
-                    
-
+                    #
+                    # Run evaluation and save model
+                    #
                     if step % flags.eval_interval_steps == 0:
                         saver.save(sess, os.path.join(log_dir, 'model'), global_step=step)
                         eval_acc_batch(flags, datasets=dataset_splits)

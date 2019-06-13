@@ -304,38 +304,51 @@ class Model:
         images_placeholder = tf.placeholder(tf.float32, name='images', shape=(batch_size, num_images, 2048))
         return images_placeholder
 
-
-    def get_lr(self, global_step=None):
-        """
-        Creates a learning rate schedule
-        :param global_step: external global step variable, if None new one is created here
-        :return:
-        """
-        if global_step is None:
-            global_step = tf.Variable(0, trainable=False, name='global_step', dtype=tf.int64)
-
+    def get_lr(self):
         if self.flags.lr_anneal == 'exp':
             lr_decay_step = self.flags.number_of_steps // self.flags.n_lr_decay
-            learning_rate = tf.train.exponential_decay(self.flags.init_learning_rate, global_step, lr_decay_step,
-                                                       1.0 / self.flags.lr_decay_rate, staircase=True)
+            self.learning_rate = tf.train.exponential_decay(self.flags.init_learning_rate, self.global_step,
+                                                            lr_decay_step, 1.0 / self.flags.lr_decay_rate, staircase=True)
         else:
             raise Exception('Learning rate schedule not implemented')
 
-        tf.summary.scalar('learning_rate', learning_rate)
-        self.learning_rate = learning_rate
+    def get_losses(self):
+        self.loss_txt_retrieval = tf.reduce_mean(
+            tf.nn.softmax_cross_entropy_with_logits_v2(logits=self.logits,
+                                                       labels=tf.one_hot(self.labels_txt2img, self.train_batch_size)),
+            name='loss_txt_retrieval')
+        self.loss_img_retrieval = tf.reduce_mean(
+            tf.nn.softmax_cross_entropy_with_logits_v2(logits=tf.transpose(self.logits, perm=[1, 0]),
+                                                       labels=tf.one_hot(self.labels_img2txt, self.flags.train_batch_size)),
+            name='loss_img_retrieval')
 
+        self.classifier_loss = get_classifier_loss(self.image_embeddings, self.text_embeddings,
+                                                   flags=self.flags, labels=self.labels_class)
 
-    def get_main_train_op(self, loss: tf.Tensor, global_step: tf.Variable):
+        regu_losses = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
+        self.loss_tot = tf.add_n([self.flags.lambdaa * (1.0 - self.flags.kappa) * self.loss_txt_retrieval,
+                                  (1.0 - self.flags.lambdaa) * (1.0 - self.flags.kappa) * self.loss_img_retrieval,
+                                  self.classifier_loss * self.flags.kappa] + regu_losses)
+
+    def get_summaries(self):
+        tf.summary.scalar('learning_rate', self.learning_rate)
+        tf.summary.scalar('loss/total', self.loss_tot)
+        tf.summary.scalar('loss/txt_retrieval', self.loss_txt_retrieval)
+        tf.summary.scalar('loss/loss_img_retrieval', self.loss_img_retrieval)
+        tf.summary.scalar('loss/classifier_loss', self.classifier_loss)
+        misclass_txt_retrieval = 1.0 - slim.metrics.accuracy(tf.argmax(self.logits, 1), self.labels_txt2img)
+        misclass_img_retrieval = 1.0 - slim.metrics.accuracy(tf.argmax(self.logits, 0), self.labels_img2txt)
+        tf.summary.scalar('misclassification/txt_retrieval', misclass_txt_retrieval)
+        tf.summary.scalar('misclassification/img_retrieval', misclass_img_retrieval)
+        return tf.summary.merge(tf.get_collection('summaries'))
+
+    def get_main_train_op(self):
         """
         Creates a train operation to minimize loss
-        :param loss: loss to be minimized
-        :param global_step: global step to be incremented whilst invoking train opeation created
-        :param flags: overall architecture parameters
-        :return:
         """
-
+        self.global_step = tf.Variable(0, trainable=False, name='global_step', dtype=tf.int64)
         # Learning rate
-        self.get_lr(global_step=global_step)
+        self.get_lr()
         # Optimizer
         if self.flags.optimizer == 'sgd':
             optimizer = tf.train.MomentumOptimizer(learning_rate=self.learning_rate, momentum=0.9)
@@ -346,7 +359,8 @@ class Model:
         # get variables to train
         variables_to_train = tf.trainable_variables(scope='(?!.*image_feature_extractor).*')
         # Train operation
-        return slim.learning.create_train_op(total_loss=loss, optimizer=optimizer, global_step=global_step,
+        return slim.learning.create_train_op(total_loss=self.loss_tot, optimizer=optimizer,
+                                             global_step=self.global_step,
                                              clip_gradient_norm=self.flags.clip_gradient_norm,
                                              variables_to_train=variables_to_train)
 
