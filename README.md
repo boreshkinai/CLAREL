@@ -7,9 +7,7 @@ https://openaccess.thecvf.com/content_CVPRW_2020/html/w54/Oreshkin_CLAREL_Classi
 please cite as 
 
 @InProceedings{oreshkin2020clarel,
-
   author = {Oreshkin, Boris N. and Rostamzadeh, Negar and Pinheiro, Pedro O. and Pal, Christopher},
-  
   title = {{CLAREL}: Classification via Retrieval Loss for Zero-Shot Learning},
   booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) Workshops},
   month = {June},
