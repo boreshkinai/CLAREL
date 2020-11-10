@@ -1,5 +1,6 @@
 # This is the implementation of the following paper
 CLAREL: Classification via Retrieval Loss for Zero-Shot Learning
+
 Boris N. Oreshkin, Negar Rostamzadeh, Pedro O. Pinheiro, Christopher Pal; Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) Workshops, 2020, pp. 916-917
 
 https://openaccess.thecvf.com/content_CVPRW_2020/html/w54/Oreshkin_CLAREL_Classification_via_Retrieval_Loss_for_Zero-Shot_Learning_CVPRW_2020_paper.html
